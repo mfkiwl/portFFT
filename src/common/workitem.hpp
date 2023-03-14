@@ -219,11 +219,69 @@ inline __attribute__((always_inline)) void wi_dft(T_ptr in, T_ptr out){
     out[0 * stride_out + 0] = a;
     out[0 * stride_out + 1] = b;
     out[2 * stride_out + 0] = c;
-    } else if constexpr(F0 >= 2 && N/F0 >= 2){
-        detail::cooley_tukey_dft<N/F0, F0, stride_in, stride_out>(in, out);
-    } else {
-        detail::naive_dft<N, stride_in, stride_out>(in, out);
-    }
+  } else if constexpr (F0 >= 2 && N / F0 >= 2) {
+    detail::cooley_tukey_dft<N / F0, F0, stride_in, stride_out>(in, out);
+  } else {
+    detail::naive_dft<N, stride_in, stride_out>(in, out);
+  }
+}
+
+template <int N, typename T_ptr>
+inline __attribute__((always_inline)) void wi_convolution(T_ptr f, T_ptr g,
+                                                          T_ptr out) {
+// TODO
+                                                          }
+
+template <int N, int N_padded, typename T_ptr>
+inline __attribute__((always_inline)) void wi_bluestein_dft(T_ptr in,
+                                                            T_ptr out) {
+  using T = detail::remove_ptr<T_ptr>;
+  T f[2 * N_padded] = {0};
+  T g[2 * N_padded] = {0};
+  // g = e^((n^2 * pi * i)/N)
+  // f = in[n]*e^(-(n^2 * pi * i)/N)
+  constexpr T f_exponent = -M_PI / N;
+  for (int n = 0; n != 2 * N; n += 2) {
+    // (a+ib)(c+id)=ac-bd+i(bc+ad)
+    T a = in[n];
+    T b = in[n + 1];
+    const int k = n/2;
+    // c and d could be precomputed
+    T c = cos(k * k * f_exponent);
+    T d = sin(k * k * f_exponent);
+
+    f[n] = a * c - b * d;
+    f[n + 1] = b * c + a * d;
+  }
+
+  // g could be precomputed
+  constexpr T g_exponent = M_PI / N;
+  g[0] = T(1);
+  g[1] = T(0);
+  for (int n = 2; n != 2 * N; n += 2) {
+    const int k = n/2;
+    g[n] = cos(k * k * g_exponent);
+    g[n + 1] = sin(k * k * g_exponent);
+    g[N_padded - n] = g_re[n];
+    g[N_padded - n + 1] = g_im[n + 1];
+  }
+
+  // convolve g and f
+  T conv_out[2*N_padded];
+  wi_convolution(f,g,conv_out);
+
+  // scalar multiplier looks a lot like f[n]/in[n]
+  constexpr multiplier_exponent = -M_PI/N;
+  for (int n = 0; n != 2 * N; n += 2) {
+    const int k = n / 2;
+    T a = cos(k * k * multiplier_exponent);
+    T b = sin(k * k * multiplier_exponent);
+    T c = conv_out[n];
+    T d = conv_out[n+1];
+
+    out[n] = a * c - b * d;
+    out[n + 1] = b * c + a * d;
+  }
 }
 
 }; //namespace sycl_fft
