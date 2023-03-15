@@ -229,8 +229,28 @@ inline __attribute__((always_inline)) void wi_dft(T_ptr in, T_ptr out){
 template <int N, typename T_ptr>
 inline __attribute__((always_inline)) void wi_convolution(T_ptr f, T_ptr g,
                                                           T_ptr out) {
-// TODO
-                                                          }
+  for (int n = 0; n != N; ++n) {
+    out[2 * n] = 0.0;
+    out[2 * n + 1] = 0.0;
+    int m = 0;
+    for (; m != n + 1; ++m) {
+      T a = f[2 * m];
+      T b = f[2 * m + 1];
+      T c = g[2 * n - 2 * m];
+      T d = g[2 * n - 2 * m + 1];
+      out[2 * n] += a * c - b * d;
+      out[2 * n + 1] += b * c + a * d;
+    }
+    for (; m != N; ++m) {
+      T a = f[2 * m];
+      T b = f[2 * m + 1];
+      T c = g[2 * N + 2 * n - 2 * m];
+      T d = g[2 * N + 2 * n - 2 * m + 1];
+      out[2 * n] += a * c - b * d;
+      out[2 * n + 1] += b * c + a * d;
+    }
+  }
+}
 
 template <int N, int N_padded, typename T_ptr>
 inline __attribute__((always_inline)) void wi_bluestein_dft(T_ptr in,
