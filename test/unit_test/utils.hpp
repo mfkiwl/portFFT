@@ -38,24 +38,26 @@ void compare_arrays(std::vector<type> array1, std::vector<type> array2,
                     double tol) {
   ASSERT_EQ(array1.size(), array2.size());
   for (size_t i = 0; i < array1.size(); i++) {
-    EXPECT_NEAR(array1[i].real(), array2[i].real(), tol);
-    EXPECT_NEAR(array1[i].imag(), array2[i].imag(), tol);
+    EXPECT_NEAR(array1[i].real(), array2[i].real(), tol) << "i = " << i;
+    EXPECT_NEAR(array1[i].imag(), array2[i].imag(), tol) << "i = " << i;
   }
 }
 
 template <typename TypeIn, typename TypeOut>
 void reference_forward_dft(std::vector<TypeIn>& in, std::vector<TypeOut>& out,
                            size_t length, size_t offset = 0) {
-  long double TWOPI = 2.0l * std::atan(1.0l) * 4.0l;
+  using ref_t = long double;
+  ref_t TWOPI = 2.0l * std::atan(1.0l) * 4.0l;
 
   size_t N = length;
   for (size_t k = 0; k < N; k++) {
-    std::complex<long double> out_temp = 0;
+    std::complex<ref_t> out_temp = 0;
     for (size_t n = 0; n < N; n++) {
-      auto multiplier = std::complex<long double>{std::cos(n * k * TWOPI / N),
-                                                  -std::sin(n * k * TWOPI / N)};
+      const ref_t exponent = static_cast<ref_t>(n * k) * TWOPI / static_cast<ref_t>(N);
+      auto multiplier =
+          std::complex<ref_t>{std::cos(exponent), -std::sin(exponent)};
       out_temp +=
-          static_cast<std::complex<long double>>(in[offset + n]) * multiplier;
+          static_cast<std::complex<ref_t>>(in[offset + n]) * multiplier;
     }
     out[offset + k] = static_cast<TypeOut>(out_temp);
   }

@@ -46,7 +46,7 @@ namespace detail{
 template <int N, int stride_in, int stride_out, typename T_ptr>
 inline __attribute__((always_inline)) void naive_dft(T_ptr in, T_ptr out) {
     using T = remove_ptr<T_ptr>;
-    constexpr T TWOPI = 2.0 * M_PI;
+    constexpr T TWOPI = T(2.0) * M_PI;
     T tmp[2*N];
     unrolled_loop<0, N, 1>([&](int idx_out) __attribute__((always_inline)) {
       tmp[2 * idx_out + 0] = 0;
@@ -226,12 +226,11 @@ inline __attribute__((always_inline)) void wi_dft(T_ptr in, T_ptr out){
   }
 }
 
-template <int N, typename T_ptr>
-inline __attribute__((always_inline)) void wi_convolution(T_ptr f, T_ptr g,
-                                                          T_ptr out) {
+template <int N, typename T>
+inline __attribute__((always_inline)) void wi_convolution(T* f, T* g, T* out) {
   for (int n = 0; n != N; ++n) {
-    out[2 * n] = 0.0;
-    out[2 * n + 1] = 0.0;
+    out[2 * n] = T(0.0);
+    out[2 * n + 1] = T(0.0);
     int m = 0;
     for (; m != n + 1; ++m) {
       T a = f[2 * m];
@@ -252,52 +251,53 @@ inline __attribute__((always_inline)) void wi_convolution(T_ptr f, T_ptr g,
   }
 }
 
-template <int N, int N_padded, typename T_ptr>
-inline __attribute__((always_inline)) void wi_bluestein_dft(T_ptr in,
-                                                            T_ptr out) {
-  using T = detail::remove_ptr<T_ptr>;
+template <int N, int N_padded, typename T>
+inline __attribute__((always_inline)) void wi_bluestein_dft(T* in, T* out) {
+  static_assert(std::is_same<T, float>::value, "expected an array of floats");
+  // 2*N-1 is probably a bad idea, but its the mathematical minimum
+  static_assert(N_padded >= 2 * N - 1);
   T f[2 * N_padded] = {0};
   T g[2 * N_padded] = {0};
   // g = e^((n^2 * pi * i)/N)
   // f = in[n]*e^(-(n^2 * pi * i)/N)
-  constexpr T f_exponent = -M_PI / N;
+  constexpr T f_exponent = -T(M_PI) / T(N);
   for (int n = 0; n != 2 * N; n += 2) {
     // (a+ib)(c+id)=ac-bd+i(bc+ad)
     T a = in[n];
     T b = in[n + 1];
-    const int k = n/2;
+    const T k = static_cast<T>(n) / T(2.0);
     // c and d could be precomputed
-    T c = cos(k * k * f_exponent);
-    T d = sin(k * k * f_exponent);
+    T c = sycl::cos(k * k * f_exponent);
+    T d = sycl::sin(k * k * f_exponent);
 
     f[n] = a * c - b * d;
     f[n + 1] = b * c + a * d;
   }
 
   // g could be precomputed
-  constexpr T g_exponent = M_PI / N;
+  constexpr T g_exponent = T(M_PI) / N;
   g[0] = T(1);
   g[1] = T(0);
   for (int n = 2; n != 2 * N; n += 2) {
-    const int k = n/2;
-    g[n] = cos(k * k * g_exponent);
-    g[n + 1] = sin(k * k * g_exponent);
-    g[N_padded - n] = g_re[n];
-    g[N_padded - n + 1] = g_im[n + 1];
+    const T k = static_cast<T>(n) / T(2.0);
+    g[n] = sycl::cos(k * k * g_exponent);
+    g[n + 1] = sycl::sin(k * k * g_exponent);
+    g[2 * N_padded - n] = g[n];
+    g[2 * N_padded - n + 1] = g[n + 1];
   }
 
   // convolve g and f
-  T conv_out[2*N_padded];
-  wi_convolution(f,g,conv_out);
+  T conv_out[2 * N_padded];
+  wi_convolution<N_padded, T>(f, g, conv_out);
 
   // scalar multiplier looks a lot like f[n]/in[n]
-  constexpr multiplier_exponent = -M_PI/N;
+  constexpr T multiplier_exponent = -T(M_PI) / N;
   for (int n = 0; n != 2 * N; n += 2) {
-    const int k = n / 2;
-    T a = cos(k * k * multiplier_exponent);
-    T b = sin(k * k * multiplier_exponent);
+    const T k = static_cast<T>(n) / T(2.0);
+    T a = sycl::cos(k * k * multiplier_exponent);
+    T b = sycl::sin(k * k * multiplier_exponent);
     T c = conv_out[n];
-    T d = conv_out[n+1];
+    T d = conv_out[n + 1];
 
     out[n] = a * c - b * d;
     out[n + 1] = b * c + a * d;
