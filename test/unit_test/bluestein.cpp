@@ -58,7 +58,7 @@ void build_g(std::complex<ftype>* g, std::size_t N_padded, double N) {
 TEST(Bluestein, HelloTest) {
   using ftype = float;
   using vtype = std::complex<ftype>;
-  constexpr auto num_elements = primes[2];
+  constexpr auto num_elements = primes[17];
   constexpr auto padded_len = num_elements * 2;
   std::vector<vtype> host_input(num_elements);
   std::vector<vtype> host_reference_output(num_elements);

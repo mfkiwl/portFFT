@@ -260,25 +260,21 @@ inline __attribute__((always_inline)) void wi_convolution(T* f, T* g, T* out) {
 template <int N, int N_padded, typename T>
 inline __attribute__((always_inline)) void wi_bluestein_dft(T* in, T* out, T* g,
                                                             T* multiplier) {
-  static_assert(std::is_same<T, float>::value, "expected an array of floats");
-  // 2*N-1 is probably a bad idea performance wise, but its the mathematical
+  // 2*N-1 is probably a bad idea performance wise, but it's the mathematical
   // minimum
   static_assert(N_padded >= 2 * N - 1);
+  static_assert(std::is_same<T, float>::value, "expected an array of floats");
+
   T f[2 * N_padded] = {0};
   // g = e^((n^2 * pi * i)/N)
   // f = in[n]*e^(-(n^2 * pi * i)/N)
-  constexpr T f_exponent = -T(M_PI) / T(N);
   for (int n = 0; n != 2 * N; n += 2) {
-    // (a+ib)(c+id)=ac-bd+i(bc+ad)
-    T a = in[n];
-    T b = in[n + 1];
-    const T k = static_cast<T>(n) / T(2.0);
-    // c and d could be precomputed
-    T c = sycl::cos(k * k * f_exponent);
-    T d = sycl::sin(k * k * f_exponent);
-
-    f[n] = a * c - b * d;
-    f[n + 1] = b * c + a * d;
+    // this works too!
+    // T f_partial[2];
+    // f_partial[0] = g[n];
+    // f_partial[1] = -g[n+1];
+    // complex_mult(f_partial, in+n, f+n);
+    complex_mult(multiplier + n, in + n, f + n);
   }
 
   // convolve g and f
@@ -288,6 +284,11 @@ inline __attribute__((always_inline)) void wi_bluestein_dft(T* in, T* out, T* g,
   // multiply by constant, W^(-(k^2)/2)
   // = e^(i(-pi k^2)/N) = cos((-pi k^2)/N) + isin((-pi k^2)/N)
   for (int n = 0; n != 2 * N; n += 2) {
+    // this works too!
+    // T m[2];
+    // m[0] = g[n];
+    // m[1] = -g[n+1];
+    // complex_mult(m, conv_out + n, out + n);
     complex_mult(multiplier + n, conv_out + n, out + n);
   }
 }
