@@ -33,6 +33,34 @@
 constexpr std::array<int, 18> primes{2,  3,  5,  7,  11, 13, 17, 19, 23,
                                      29, 31, 37, 41, 43, 47, 53, 59, 61};
 
+template <typename Integer>
+inline constexpr Integer next_pow2(Integer n) {
+  if constexpr (sizeof(Integer) == sizeof(std::uint32_t)) {
+#if __has_builtin(__builtin_clz)
+    return 1 << (32 - __builtin_clz(static_cast<std::uint32_t>(n)));
+#else
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    return n + 1;
+#endif
+  } else if constexpr (sizeof(Integer) == sizeof(std::uint64_t)) {
+#if __has_builtin(__builtin_clzl)
+    return 1 << (64 - __builtin_clzl(static_cast<std::uint64_t>(n)));
+#else
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    n |= n >> 32;
+    return n + 1;
+#endif
+  }
+}
+
 template <typename ftype>
 void build_multiplier(std::complex<ftype>* m, std::size_t N) {
   for (int k = 0; k != N; k += 1) {
@@ -44,11 +72,13 @@ void build_multiplier(std::complex<ftype>* m, std::size_t N) {
 }
 
 template <typename ftype>
-void build_g(std::complex<ftype>* g, std::size_t N_padded, double N) {
-  for (std::size_t n = 0; n != N_padded; n += 1) {
+void build_g(std::complex<ftype>* g, std::size_t N_padded, std::size_t N) {
+  g[0] = {1, 0};
+  for (std::size_t n = 1; n != N; n += 1) {
     // note that sin(-x) = -sin(x) and cos(-x) = cos(x), so this is connected to
     // build_multiplier
-    const double inner = (double(M_PI) * static_cast<double>(n * n)) / N;
+    const double inner =
+        (double(M_PI) * static_cast<double>(n * n)) / static_cast<double>(N);
     g[n] = {static_cast<ftype>(std::cos(inner)),
             static_cast<ftype>(std::sin(inner))};
     g[N_padded - n] = g[n];
@@ -59,14 +89,16 @@ TEST(Bluestein, HelloTest) {
   using ftype = float;
   using vtype = std::complex<ftype>;
   constexpr auto num_elements = primes[17];
-  constexpr auto padded_len = num_elements * 2;
+  constexpr auto padded_len = next_pow2(2 * num_elements - 1);
+  std::cout << "num elems: " << num_elements << ", padded len: " << padded_len
+            << '\n';
   std::vector<vtype> host_input(num_elements);
   std::vector<vtype> host_reference_output(num_elements);
   std::vector<vtype> output(num_elements);
   const auto multiplier = std::make_unique<vtype[]>(num_elements);
   build_multiplier(multiplier.get(), num_elements);
   const auto g_host = std::make_unique<vtype[]>(padded_len);
-  build_g(g_host.get(), padded_len, static_cast<double>(num_elements));
+  build_g(g_host.get(), padded_len, num_elements);
 
   for (size_t i = 0; i< num_elements; ++i){
     host_input[i] = vtype{ftype(i),0}; 
