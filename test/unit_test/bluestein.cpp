@@ -26,8 +26,54 @@
 #include "number_generators.hpp"
 #include "utils.hpp"
 
+#include "common/bluestein_workitem.hpp"
 #include "common/transfers.hpp"
-#include "common/workitem.hpp"
+
+template <typename Float>
+struct bluestein_data {
+  sycl::buffer<std::complex<Float>, 1> multipliers_buffer;
+  sycl::buffer<std::complex<Float>, 1> g_buffer;
+
+  bluestein_data(sycl::queue q, size_t N, size_t padded_N)
+      : multipliers_buffer(N), g_buffer(padded_N) {
+    assert(padded_N >= 2 * N - 1);
+
+    auto multipliers = std::make_unique<std::complex<Float>[]>(N);
+    for (size_t k = 0; k != N; k += 1) {
+      const double inner =
+          (double(-M_PI) * static_cast<double>(k * k)) / static_cast<double>(N);
+      multipliers[k] = {static_cast<Float>(std::cos(inner)),
+                        static_cast<Float>(std::sin(inner))};
+    }
+
+    auto m_event = q.submit([&](sycl::handler& cgh) {
+      auto mult_acc =
+          multipliers_buffer.template get_access<sycl::access::mode::write>(
+              cgh);
+      cgh.copy(multipliers.get(), mult_acc);
+    });
+
+    auto g = std::make_unique<std::complex<Float>[]>(padded_N);
+    g[0] = {1, 0};
+    for (std::size_t n = 1; n != N; n += 1) {
+      // note that sin(-x) = -sin(x) and cos(-x) = cos(x), so this is connected
+      // to multiplier
+      const double inner =
+          (double(M_PI) * static_cast<double>(n * n)) / static_cast<double>(N);
+      g[n] = {static_cast<Float>(std::cos(inner)),
+              static_cast<Float>(std::sin(inner))};
+      g[padded_N - n] = g[n];
+    }
+
+    auto g_event = q.submit([&](sycl::handler& cgh) {
+      auto g_acc = g_buffer.template get_access<sycl::access::mode::write>(cgh);
+      cgh.copy(g.get(), g_acc);
+    });
+
+    m_event.wait();
+    g_event.wait();
+  }
+};
 
 template <typename Integer>
 inline constexpr Integer next_pow2(Integer n) {
@@ -59,30 +105,6 @@ inline constexpr Integer next_pow2(Integer n) {
   }
 }
 
-template <typename ftype>
-void build_multiplier(std::complex<ftype>* m, std::size_t N) {
-  for (int k = 0; k != N; k += 1) {
-    const double inner =
-        (double(-M_PI) * static_cast<double>(k * k)) / static_cast<double>(N);
-    m[k] = {static_cast<ftype>(std::cos(inner)),
-            static_cast<ftype>(std::sin(inner))};
-  }
-}
-
-template <typename ftype>
-void build_g(std::complex<ftype>* g, std::size_t N_padded, std::size_t N) {
-  g[0] = {1, 0};
-  for (std::size_t n = 1; n != N; n += 1) {
-    // note that sin(-x) = -sin(x) and cos(-x) = cos(x), so this is connected to
-    // build_multiplier
-    const double inner =
-        (double(M_PI) * static_cast<double>(n * n)) / static_cast<double>(N);
-    g[n] = {static_cast<ftype>(std::cos(inner)),
-            static_cast<ftype>(std::sin(inner))};
-    g[N_padded - n] = g[n];
-  }
-}
-
 template <int Prime>
 void test_bluestein() {
   using ftype = float;
@@ -92,22 +114,16 @@ void test_bluestein() {
   std::vector<vtype> host_input(num_elements);
   std::vector<vtype> host_reference_output(num_elements);
   std::vector<vtype> output(num_elements);
-  const auto multiplier = std::make_unique<vtype[]>(num_elements);
-  build_multiplier(multiplier.get(), num_elements);
-  const auto g_host = std::make_unique<vtype[]>(padded_len);
-  build_g(g_host.get(), padded_len, num_elements);
 
-  for (size_t i = 0; i< num_elements; ++i){
-    host_input[i] = vtype{ftype(i),0}; 
-  }
-  //populate_with_random(host_input, ftype(-1.0), ftype(1.0));
+  populate_with_random(host_input, ftype(-1.0), ftype(1.0));
+
   reference_forward_dft(host_input, host_reference_output, num_elements, 0);
+
   {
     sycl::queue q(sycl::cpu_selector_v);
     sycl::buffer<std::complex<ftype>, 1> input_buffer(num_elements);
     sycl::buffer<std::complex<ftype>, 1> output_buffer(num_elements);
-    sycl::buffer<std::complex<ftype>, 1> mult_buffer(num_elements);
-    sycl::buffer<std::complex<ftype>, 1> g_buffer(padded_len);
+    bluestein_data<float> bd(q, num_elements, padded_len);
 
     q.submit([&](sycl::handler& cgh) {
       auto in_acc = input_buffer.get_access<sycl::access::mode::write>(cgh);
@@ -115,19 +131,10 @@ void test_bluestein() {
     });
 
     q.submit([&](sycl::handler& cgh) {
-      auto mult_acc = mult_buffer.get_access<sycl::access::mode::write>(cgh);
-      cgh.copy(multiplier.get(), mult_acc);
-    });
-
-    q.submit([&](sycl::handler& cgh) {
-      auto g_acc = g_buffer.get_access<sycl::access::mode::write>(cgh);
-      cgh.copy(g_host.get(), g_acc);
-    });
-
-    q.submit([&](sycl::handler& cgh) {
       auto in_acc = input_buffer.get_access<sycl::access::mode::read>(cgh);
-      auto mult_acc = mult_buffer.get_access<sycl::access::mode::read>(cgh);
-      auto g_acc = g_buffer.get_access<sycl::access::mode::read>(cgh);
+      auto mult_acc =
+          bd.multipliers_buffer.get_access<sycl::access::mode::read>(cgh);
+      auto g_acc = bd.g_buffer.get_access<sycl::access::mode::read>(cgh);
       auto out_acc = output_buffer.get_access<sycl::access::mode::write>(cgh);
 
       cgh.single_task([=] {
@@ -164,14 +171,6 @@ void test_bluestein() {
     });
   }
   compare_arrays(output, host_reference_output, 1e-3);
-
-  ftype max_diff = 0;
-  for (std::size_t i = 0; i != num_elements; i += 1) {
-    ftype diff = std::abs(output[i] - host_reference_output[i]);
-    max_diff = std::max(max_diff, diff);
-  }
-  std::cout << "num elems: " << num_elements << ", padded len: " << padded_len
-            << ", maximum diff = " << max_diff << '\n';
 }
 
 template <int... Ps>
