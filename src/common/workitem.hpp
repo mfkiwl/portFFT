@@ -46,7 +46,7 @@ namespace detail{
 template <int N, int stride_in, int stride_out, typename T_ptr>
 inline __attribute__((always_inline)) void naive_dft(T_ptr in, T_ptr out) {
     using T = remove_ptr<T_ptr>;
-    constexpr T TWOPI = T(2.0) * M_PI;
+    constexpr T TWOPI = 2.0 * M_PI;
     T tmp[2*N];
     unrolled_loop<0, N, 1>([&](int idx_out) __attribute__((always_inline)) {
       tmp[2 * idx_out + 0] = 0;
@@ -195,21 +195,20 @@ bool fits_in_wi_device(int fft_size) {
   return fits_in_wi_device_struct<Scalar>::buf[fft_size - 1];
 }
 
-};  // namespace detail
+}; //namespace detail
 
 /**
  * Calculates DFT using FFT algorithm. Can work in or out of place.
- *
+ * 
  * @tparam N size of the DFT transform
  * @tparam stride_in stride (in complex values) between complex values in `in`
  * @tparam stride_out stride (in complex values) between complex values in `out`
- * @tparam T_ptr type of pointer for `in` and `out`. Can be raw pointer or
- * sycl::multi_ptr.
+ * @tparam T_ptr type of pointer for `in` and `out`. Can be raw pointer or sycl::multi_ptr.
  * @param in pointer to input
  * @param out pointer to output
- */
+*/
 template <int N, int stride_in, int stride_out, typename T_ptr>
-inline __attribute__((always_inline)) void wi_dft(T_ptr in, T_ptr out) {
+inline __attribute__((always_inline)) void wi_dft(T_ptr in, T_ptr out){
   constexpr int F0 = detail::factorize(N);
   if constexpr (N == 2) {
     using T = detail::remove_ptr<T_ptr>;
@@ -220,11 +219,11 @@ inline __attribute__((always_inline)) void wi_dft(T_ptr in, T_ptr out) {
     out[0 * stride_out + 0] = a;
     out[0 * stride_out + 1] = b;
     out[2 * stride_out + 0] = c;
-  } else if constexpr (F0 >= 2 && N / F0 >= 2) {
-    detail::cooley_tukey_dft<N / F0, F0, stride_in, stride_out>(in, out);
-  } else {
-    detail::naive_dft<N, stride_in, stride_out>(in, out);
-  }
+    } else if constexpr(F0 >= 2 && N/F0 >= 2){
+        detail::cooley_tukey_dft<N/F0, F0, stride_in, stride_out>(in, out);
+    } else {
+        detail::naive_dft<N, stride_in, stride_out>(in, out);
+    }
 }
 
 }; //namespace sycl_fft
