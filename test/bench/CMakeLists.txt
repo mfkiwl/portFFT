@@ -38,6 +38,7 @@ FetchContent_MakeAvailable(googlebenchmark)
 
 set(SYCL_FFT_BENCHMARKS
     workitem.cpp
+    bluestein_workitem.cpp
     workitem_dispatcher.cpp
 )
 
