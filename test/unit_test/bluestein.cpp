@@ -29,14 +29,11 @@
 #include "common/transfers.hpp"
 #include "common/workitem.hpp"
 
-// list of primes less than 64
-constexpr std::array<int, 18> primes{2,  3,  5,  7,  11, 13, 17, 19, 23,
-                                     29, 31, 37, 41, 43, 47, 53, 59, 61};
-
 template <typename Integer>
 inline constexpr Integer next_pow2(Integer n) {
   if constexpr (sizeof(Integer) == sizeof(std::uint32_t)) {
 #if __has_builtin(__builtin_clz)
+    static_assert(sizeof(std::uint32_t) == sizeof(unsigned int));
     return 1 << (32 - __builtin_clz(static_cast<std::uint32_t>(n)));
 #else
     n |= n >> 1;
@@ -48,6 +45,7 @@ inline constexpr Integer next_pow2(Integer n) {
 #endif
   } else if constexpr (sizeof(Integer) == sizeof(std::uint64_t)) {
 #if __has_builtin(__builtin_clzl)
+    static_assert(sizeof(std::uint64_t) == sizeof(unsigned long));
     return 1 << (64 - __builtin_clzl(static_cast<std::uint64_t>(n)));
 #else
     n |= n >> 1;
@@ -85,13 +83,12 @@ void build_g(std::complex<ftype>* g, std::size_t N_padded, std::size_t N) {
   }
 }
 
-TEST(Bluestein, HelloTest) {
+template <int Prime>
+void test_bluestein() {
   using ftype = float;
   using vtype = std::complex<ftype>;
-  constexpr auto num_elements = primes[17];
+  constexpr auto num_elements = Prime;
   constexpr auto padded_len = next_pow2(2 * num_elements - 1);
-  std::cout << "num elems: " << num_elements << ", padded len: " << padded_len
-            << '\n';
   std::vector<vtype> host_input(num_elements);
   std::vector<vtype> host_reference_output(num_elements);
   std::vector<vtype> output(num_elements);
@@ -133,7 +130,7 @@ TEST(Bluestein, HelloTest) {
       auto g_acc = g_buffer.get_access<sycl::access::mode::read>(cgh);
       auto out_acc = output_buffer.get_access<sycl::access::mode::write>(cgh);
 
-      cgh.single_task<class finlays>([=] {
+      cgh.single_task([=] {
         ftype in[num_elements * 2];
         ftype out[num_elements * 2];
         ftype mult[num_elements * 2];
@@ -152,8 +149,8 @@ TEST(Bluestein, HelloTest) {
           g[2 * i + 1] = g_acc[i].imag();
         }
 
-        sycl_fft::wi_bluestein_dft<num_elements, padded_len, ftype>(in, out, g,
-                                                                    mult);
+        sycl_fft::detail::wi_bluestein_dft<num_elements, padded_len, ftype>(
+            in, out, g, mult);
 
         for (std::size_t i = 0; i < num_elements; ++i) {
           out_acc[i] = {out[2 * i], out[2 * i + 1]};
@@ -173,5 +170,15 @@ TEST(Bluestein, HelloTest) {
     ftype diff = std::abs(output[i] - host_reference_output[i]);
     max_diff = std::max(max_diff, diff);
   }
-  std::cout << "maximum diff = " << max_diff << '\n';
+  std::cout << "num elems: " << num_elements << ", padded len: " << padded_len
+            << ", maximum diff = " << max_diff << '\n';
 }
+
+template <int... Ps>
+void test_bluesteins(std::integer_sequence<int, Ps...>) {
+  (test_bluestein<Ps>(), ...);
+}
+
+using prime_list = std::integer_sequence<int, 3, 5, 11, 31, 43, 61>;
+
+TEST(Bluestein, HelloTest) { test_bluesteins(prime_list{}); }

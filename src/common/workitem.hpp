@@ -195,20 +195,94 @@ bool fits_in_wi_device(int fft_size) {
   return fits_in_wi_device_struct<Scalar>::buf[fft_size - 1];
 }
 
-}; //namespace detail
+template <typename T>
+inline __attribute__((always_inline)) void complex_mult(T* x, T* y, T* out) {
+  T a = x[0];
+  T b = x[1];
+  T c = y[0];
+  T d = y[1];
+  out[0] = a * c - b * d;
+  out[1] = b * c + a * d;
+}
+
+// TODO replace with a fftconvolution when inverse dft is merged
+template <int N, typename T>
+inline __attribute__((always_inline)) void wi_convolution(T* f, T* g, T* out) {
+  unrolled_loop<0, 2 * N, 2>([&](int n) __attribute__((always_inline)) {
+    out[n] = T(0.0);
+    out[n + 1] = T(0.0);
+    int m = 0;
+    for (; m != n + 2; m += 2) {
+      T mult[2];
+      complex_mult(f + m, g + (n - m), mult);
+      out[n] += mult[0];
+      out[n + 1] += mult[1];
+    }
+    for (; m != 2 * N; m += 2) {
+      T mult[2];
+      complex_mult(f + m, g + (2 * N + n - m), mult);
+      out[n] += mult[0];
+      out[n + 1] += mult[1];
+    }
+  });
+}
+
+template <int N, int N_padded, typename T>
+inline __attribute__((always_inline)) void wi_bluestein_dft(T* in, T* out, T* g,
+                                                            T* multiplier) {
+  // 2*N-1 is probably a bad idea performance wise, but it's the mathematical
+  // minimum
+  static_assert(N_padded >= 2 * N - 1);
+  static_assert(std::is_same<T, float>::value, "expected an array of floats");
+
+  T f[2 * N_padded] = {0};
+  // g = e^((n^2 * pi * i)/N)
+  // f = in[n]*e^(-(n^2 * pi * i)/N)
+  unrolled_loop<0, 2 * N, 2>([&](int n) {
+    // this works too!
+    // T f_partial[2];
+    // f_partial[0] = g[n];
+    // f_partial[1] = -g[n+1];
+    // complex_mult(f_partial, in+n, f+n);
+    complex_mult(multiplier + n, in + n, f + n);
+  });
+
+  // TODO in the future f and g will be convolved with an FFT convolution, i.e.
+  // the inverse FFT of the produce of two FFTs. At that point we can actually
+  // pre-calculate the FFT of g. Because of this g will no longer be present so
+  // the multiplier array will be needed.
+
+  // convolve g and f
+  T conv_out[2 * N_padded];
+  wi_convolution<N_padded, T>(f, g, conv_out);
+
+  // multiply by constant, W^(-(k^2)/2)
+  // = e^(i(-pi k^2)/N) = cos((-pi k^2)/N) + isin((-pi k^2)/N)
+  unrolled_loop<0, 2 * N, 2>([&](int n) {
+    // this works too!
+    // T m[2];
+    // m[0] = g[n];
+    // m[1] = -g[n+1];
+    // complex_mult(m, conv_out + n, out + n);
+    complex_mult(multiplier + n, conv_out + n, out + n);
+  });
+}
+
+};  // namespace detail
 
 /**
  * Calculates DFT using FFT algorithm. Can work in or out of place.
- * 
+ *
  * @tparam N size of the DFT transform
  * @tparam stride_in stride (in complex values) between complex values in `in`
  * @tparam stride_out stride (in complex values) between complex values in `out`
- * @tparam T_ptr type of pointer for `in` and `out`. Can be raw pointer or sycl::multi_ptr.
+ * @tparam T_ptr type of pointer for `in` and `out`. Can be raw pointer or
+ * sycl::multi_ptr.
  * @param in pointer to input
  * @param out pointer to output
-*/
+ */
 template <int N, int stride_in, int stride_out, typename T_ptr>
-inline __attribute__((always_inline)) void wi_dft(T_ptr in, T_ptr out){
+inline __attribute__((always_inline)) void wi_dft(T_ptr in, T_ptr out) {
   constexpr int F0 = detail::factorize(N);
   if constexpr (N == 2) {
     using T = detail::remove_ptr<T_ptr>;
@@ -223,73 +297,6 @@ inline __attribute__((always_inline)) void wi_dft(T_ptr in, T_ptr out){
     detail::cooley_tukey_dft<N / F0, F0, stride_in, stride_out>(in, out);
   } else {
     detail::naive_dft<N, stride_in, stride_out>(in, out);
-  }
-}
-
-template <typename T>
-inline __attribute__((always_inline)) void complex_mult(T* x, T* y, T* out) {
-  T a = x[0];
-  T b = x[1];
-  T c = y[0];
-  T d = y[1];
-  out[0] = a * c - b * d;
-  out[1] = b * c + a * d;
-}
-
-template <int N, typename T>
-inline __attribute__((always_inline)) void wi_convolution(T* f, T* g, T* out) {
-  for (int n = 0; n != N; ++n) {
-    out[2 * n] = T(0.0);
-    out[2 * n + 1] = T(0.0);
-    int m = 0;
-    for (; m != n + 1; ++m) {
-      T mult[2];
-      complex_mult(f + (2 * m), g + (2 * n - 2 * m), mult);
-      out[2 * n] += mult[0];
-      out[2 * n + 1] += mult[1];
-    }
-    for (; m != N; ++m) {
-      T mult[2];
-      complex_mult(f + (2 * m), g + (2 * N + 2 * n - 2 * m), mult);
-      out[2 * n] += mult[0];
-      out[2 * n + 1] += mult[1];
-    }
-  }
-}
-
-template <int N, int N_padded, typename T>
-inline __attribute__((always_inline)) void wi_bluestein_dft(T* in, T* out, T* g,
-                                                            T* multiplier) {
-  // 2*N-1 is probably a bad idea performance wise, but it's the mathematical
-  // minimum
-  static_assert(N_padded >= 2 * N - 1);
-  static_assert(std::is_same<T, float>::value, "expected an array of floats");
-
-  T f[2 * N_padded] = {0};
-  // g = e^((n^2 * pi * i)/N)
-  // f = in[n]*e^(-(n^2 * pi * i)/N)
-  for (int n = 0; n != 2 * N; n += 2) {
-    // this works too!
-    // T f_partial[2];
-    // f_partial[0] = g[n];
-    // f_partial[1] = -g[n+1];
-    // complex_mult(f_partial, in+n, f+n);
-    complex_mult(multiplier + n, in + n, f + n);
-  }
-
-  // convolve g and f
-  T conv_out[2 * N_padded];
-  wi_convolution<N_padded, T>(f, g, conv_out);
-
-  // multiply by constant, W^(-(k^2)/2)
-  // = e^(i(-pi k^2)/N) = cos((-pi k^2)/N) + isin((-pi k^2)/N)
-  for (int n = 0; n != 2 * N; n += 2) {
-    // this works too!
-    // T m[2];
-    // m[0] = g[n];
-    // m[1] = -g[n+1];
-    // complex_mult(m, conv_out + n, out + n);
-    complex_mult(multiplier + n, conv_out + n, out + n);
   }
 }
 
