@@ -87,7 +87,7 @@ __attribute__((always_inline)) inline void workgroup_impl(const T* input, T* out
   for (std::size_t offset = global_offset; offset <= max_global_offset; offset += offset_increment) {
     global2local<pad::DO_PAD, level::WORKGROUP, SubgroupSize>(it, input, loc, 2 * FFTSize, offset);
     sycl::group_barrier(it.get_group());
-    wg_dft<Dir, FFTSize, N, M, SubgroupSize>(loc, loc_twiddles, wg_twiddles, it, scaling_factor);
+    wg_dft<Dir, N, M, SubgroupSize>(loc, loc_twiddles, wg_twiddles, it, scaling_factor);
     sycl::group_barrier(it.get_group());
     local2global_transposed<N, M, SYCLFFT_SGS_IN_WG, SubgroupSize, detail::pad::DO_PAD>(it, loc, output, offset);
     sycl::group_barrier(it.get_group());
