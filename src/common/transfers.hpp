@@ -51,7 +51,7 @@ namespace detail {
 template <detail::pad Pad = detail::pad::DO_PAD>
 __attribute__((always_inline)) inline std::size_t pad_local(std::size_t local_idx) {
   if constexpr (Pad == detail::pad::DO_PAD) {
-    local_idx += local_idx / static_cast<std::size_t>(SYCL_FFT_N_LOCAL_BANKS*2);
+    local_idx += local_idx / static_cast<std::size_t>(SYCL_FFT_N_LOCAL_BANKS*4);
   }
   return local_idx;
 }
@@ -345,7 +345,7 @@ __attribute__((always_inline)) inline void local2global_transposed(sycl::nd_item
   for (std::size_t i = it.get_local_linear_id(); i < N * M; i += num_threads) {
     std::size_t source_row = i / N;
     std::size_t source_col = i % N;
-    std::size_t source_index = detail::pad_local<Pad>(2 * M * source_col + 2 * source_row);
+    std::size_t source_index = detail::pad_local<Pad>(2 * (M * source_col + source_row));
     global[offset + 2 * i] = local[source_index];
     global[offset + 2 * i + 1] = local[source_index + 1];
   }
