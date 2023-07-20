@@ -346,8 +346,8 @@ __attribute__((always_inline)) inline void local2global_transposed(sycl::nd_item
     std::size_t source_row = i / N;
     std::size_t source_col = i % N;
     std::size_t source_index = detail::pad_local<Pad>(2 * (M * source_col + source_row));
-    global[offset + 2 * i] = local[source_index];
-    global[offset + 2 * i + 1] = local[source_index + 1];
+    sycl::vec<T, 2> v{local[source_index], local[source_index+1]};
+    *reinterpret_cast<sycl::vec<T, 2>*>(&global[offset + 2 * i]) = v;
   }
 }
 
