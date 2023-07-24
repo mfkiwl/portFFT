@@ -28,6 +28,20 @@
 namespace portfft {
 
 /**
+ * Calculate the number of lines between each padding in local memory.
+ * e.g. If there are 64 elements in a row, then the column values are 128 float apart.
+ * There are 32 banks in a "line", each the size of a float, so we only want a padding float every 128/32=4 lines.
+ *
+ * @param row_size the number of complex values in a row
+ * @return constexpr std::size_t the number of lines between each padding in local memory.
+ */
+constexpr std::size_t lines_per_pad_wg(std::size_t row_size) {
+  // 2*row_size is the number of floats between each successive read for the column dfts
+  // we only need 1 pad for each of those
+  return (2 * row_size) / PORTFFT_N_LOCAL_BANKS;
+}
+
+/**
  * Calculates FFT using Bailey 4 step algorithm.
  *
  * @tparam Dir Direction of the FFT
@@ -35,8 +49,8 @@ namespace portfft {
  * @tparam N Smaller factor of the Problem size
  * @tparam M Larger factor of the problem size
  * @tparam SubgroupSize Size of the subgroup
+ * @tparam LinesPerPad the number of groups of PORTFFT_N_LOCAL_BANKS to have between each local pad.
  * @tparam T Scalar Type
- * @tparam T_twiddles_ptr Type of twiddle pointer utilized by subgroup ffts
  *
  * @param loc local accessor containing the input
  * @param loc_twiddles Pointer to twiddles to be used by sub group FFTs
@@ -44,9 +58,10 @@ namespace portfft {
  * @param it Associated nd_item
  * @param scaling_factor Scalar value with which the result is to be scaled
  */
-template <direction Dir, int FFTSize, int N, int M, int SubgroupSize, typename T>
+template <direction Dir, int FFTSize, int N, int M, int SubgroupSize, std::size_t LinesPerPad, typename T>
 __attribute__((always_inline)) inline void wg_dft(T* loc, T* loc_twiddles, const T* wg_twiddles, sycl::nd_item<1> it,
                                                   T scaling_factor) {
+
   constexpr int fact_sg_N = detail::factorize_sg(N, SubgroupSize);
   constexpr int fact_wi_N = N / fact_sg_N;
   constexpr int fact_sg_M = detail::factorize_sg(M, SubgroupSize);
@@ -76,12 +91,12 @@ __attribute__((always_inline)) inline void wg_dft(T* loc, T* loc_twiddles, const
   for (int sub_batch = n_sg_offset; sub_batch < max_n_sg_offset; sub_batch += n_sg_increment) {
     bool working = sub_batch < M && static_cast<int>(sg.get_local_linear_id()) < max_working_tid_in_sg_n;
     if (working) {
-      local2private_transposed<fact_wi_N, detail::pad::DO_PAD>(
+      local2private_transposed<fact_wi_N, detail::pad::DO_PAD, LinesPerPad>(
           loc, priv, static_cast<int>(sg.get_local_linear_id()) % fact_sg_N, sub_batch, M);
     }
     sg_dft<Dir, fact_wi_N, fact_sg_N>(priv, sg, loc_twiddles + (2 * M));
     if (working) {
-      private2local_transposed<fact_wi_N, detail::pad::DO_PAD>(
+      private2local_transposed<fact_wi_N, detail::pad::DO_PAD, LinesPerPad>(
           priv, loc, static_cast<int>(sg.get_local_linear_id()) % fact_sg_N, fact_sg_N, sub_batch, M);
     }
   }
@@ -90,7 +105,7 @@ __attribute__((always_inline)) inline void wg_dft(T* loc, T* loc_twiddles, const
   for (int sub_batch = m_sg_offset; sub_batch < max_m_sg_offset; sub_batch += m_sg_increment) {
     bool working = sub_batch < N && sg.get_local_linear_id() < max_working_tid_in_sg_m;
     if (working) {
-      local2private<2 * fact_wi_M, detail::pad::DO_PAD>(
+      local2private<2 * fact_wi_M, detail::pad::DO_PAD, LinesPerPad>(
           loc, priv, sg.get_local_linear_id() % static_cast<std::size_t>(fact_sg_M),
           static_cast<std::size_t>(2 * fact_wi_M), static_cast<std::size_t>(2 * M * sub_batch));
     }
@@ -116,7 +131,7 @@ __attribute__((always_inline)) inline void wg_dft(T* loc, T* loc_twiddles, const
     });
 
     if (working) {
-      store_transposed<2 * fact_wi_M, detail::pad::DO_PAD>(
+      store_transposed<2 * fact_wi_M, detail::pad::DO_PAD, LinesPerPad>(
           priv, loc, sg.get_local_linear_id() % static_cast<std::size_t>(fact_sg_M),
           static_cast<std::size_t>(fact_sg_M), static_cast<std::size_t>(2 * M * sub_batch));
     }

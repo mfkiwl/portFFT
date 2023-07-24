@@ -88,7 +88,7 @@ __attribute__((always_inline)) inline void workitem_impl(const T* input, T* outp
     std::size_t n_working = sycl::min(SubgroupSize, n_transforms - i + subgroup_local_id);
 
     if constexpr (TransposeIn == detail::transpose::NOT_TRANSPOSED) {
-      global2local<pad::DO_PAD, level::SUBGROUP, SubgroupSize>(it, input, loc, N_reals * n_working,
+      global2local<level::SUBGROUP, SubgroupSize, pad::DO_PAD>(it, input, loc, N_reals * n_working,
                                                                N_reals * (i - subgroup_local_id), local_offset);
       sycl::group_barrier(sg);
     }
@@ -113,7 +113,7 @@ __attribute__((always_inline)) inline void workitem_impl(const T* input, T* outp
     sycl::group_barrier(sg);
     // Store back to global in the same manner irrespective of input data layout, as
     //  the transposed case is assumed to be used only in OOP scenario.
-    local2global<pad::DO_PAD, level::SUBGROUP, SubgroupSize>(it, loc, output, N_reals * n_working, local_offset,
+    local2global<level::SUBGROUP, SubgroupSize, pad::DO_PAD>(it, loc, output, N_reals * n_working, local_offset,
                                                              N_reals * (i - subgroup_local_id));
     sycl::group_barrier(sg);
   }
