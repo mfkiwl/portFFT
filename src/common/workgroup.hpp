@@ -47,9 +47,9 @@ __attribute__((always_inline)) inline void column_ffts(sycl::sub_group sg, T* pr
 
   static_assert(WIPerFFT * FFTSizePerWI == N);
   if constexpr (M == 64 && N == 64) {
-    static_assert(WIPerFFT == 32);
-    static_assert(FFTSizePerWI == 2);
-    static_assert(ffts_per_sg == 1);
+    static_assert(WIPerFFT == 16);
+    static_assert(FFTSizePerWI == 4);
+    static_assert(ffts_per_sg == 2);
   }
 
   // which of the sub-groups ffts will this wi do
@@ -76,9 +76,9 @@ __attribute__((always_inline)) inline void row_ffts(sycl::sub_group sg, T* priv,
   static_assert(N % ffts_per_sg == 0, "need to account for a part of a subgroup breaking from the for-loop");
   static_assert(SubgroupSize % WIPerFFT == 0, "need to account for some work-items being inactive in the sg dft");
   if constexpr (M == 64 && N == 64) {
-    static_assert(WIPerFFT == 32);
-    static_assert(FFTSizePerWI == 2);
-    static_assert(ffts_per_sg == 1);
+    static_assert(WIPerFFT == 16);
+    static_assert(FFTSizePerWI == 4);
+    static_assert(ffts_per_sg == 2);
   }
 
   const int fft_in_sg = static_cast<int>(sg.get_local_linear_id()) / WIPerFFT;
@@ -144,10 +144,10 @@ __attribute__((always_inline)) inline void wg_dft(T* loc, T* loc_twiddles, const
   if constexpr (N * M == 4096) {
     static_assert(N == 64);
     static_assert(M == 64);
-    static_assert(fact_sg_N == 32);
-    static_assert(fact_sg_M == 32);
-    static_assert(fact_wi_N == 2);
-    static_assert(fact_wi_M == 2);
+    static_assert(fact_sg_N == 16);
+    static_assert(fact_sg_M == 16);
+    static_assert(fact_wi_N == 4);
+    static_assert(fact_wi_M == 4);
   }
 
   constexpr int private_mem_size = 2 * (fact_wi_M > fact_wi_N ? fact_wi_M : fact_wi_N);

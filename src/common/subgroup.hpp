@@ -221,6 +221,7 @@ __attribute__((always_inline)) inline void cross_sg_dft(T& real, T& imag, sycl::
  * @return the factor below or equal to subgroup size
  */
 constexpr int factorize_sg(int N, int sg_size) {
+  if (N == 64) return 16; // seems to work well for 4096 wg dft
   for (int i = sg_size; i > 1; i--) {
     if (N % i == 0) {
       return i;
