@@ -52,6 +52,66 @@ std::size_t get_global_size_workgroup(std::size_t n_transforms, std::size_t subg
   return wg_size * sycl::min(maximum_n_wgs, n_transforms);
 }
 
+// Size in floats
+template <int Size, int SubgroupSize, detail::pad Pad, std::size_t BankLinesPerPad, typename T>
+__attribute__((always_inline)) inline void async_fixed_global2local(sycl::nd_item<1> it, const T* global, T* local,
+                                                                    std::size_t global_offset) {
+  // #ifdef(__NVPTX__)
+  if constexpr (std::is_same<T, float>::value && Size == 4096) {
+    //  assume that global + global_offset is 16 byte aligned
+    constexpr auto vec_size = 16 / sizeof(T);
+    // TODO if there is no padding then we can just send all the data
+    static_assert(Pad == detail::pad::DO_PAD);
+    static_assert(BankLinesPerPad == 4);
+    static_assert(vec_size == 4);
+
+    using vec = sycl::vec<T, vec_size>;
+
+    const auto sg = it.get_sub_group();
+    const auto num_sgs = sg.get_group_range();
+
+    constexpr auto contiguous_floats = BankLinesPerPad * PORTFFT_N_LOCAL_BANKS;
+    static_assert(contiguous_floats == 128);
+    constexpr auto contiguous_vecs = contiguous_floats / vec_size;
+    constexpr auto pads_to_realign = 16 / sizeof(T);
+    constexpr auto floats_until_realign = contiguous_floats * pads_to_realign;
+    static_assert(floats_until_realign == 512);
+    constexpr auto floats_and_pads_between_realign = floats_until_realign + pads_to_realign;
+    static_assert(floats_and_pads_between_realign == 516);
+
+    constexpr auto realign_groups = Size / floats_until_realign;
+    static_assert(realign_groups == 16);
+    constexpr auto vecs_between_groups = floats_and_pads_between_realign / vec_size;
+    static_assert(vecs_between_groups == 128 + 1);
+
+    auto step = vecs_between_groups * num_sgs;
+    auto global_vec_ptr =
+        reinterpret_cast<const vec*>(global + global_offset) + vecs_between_groups * sg.get_group_id();
+    auto local_vec_ptr = reinterpret_cast<vec*>(local) + vecs_between_groups * sg.get_group_id();
+    auto end = global_vec_ptr + vecs_between_groups * realign_groups;
+
+    // The subgroups will iterate through the memory, each time taking a chunk required to realign back to 16 bytes
+    for (; global_vec_ptr < end; global_vec_ptr += step, local_vec_ptr += step) {
+      // the subgroup will write the data out in reverse order, nicely align
+      for (auto inner = pads_to_realign - 1; inner > 0; inner -= 1) {
+        const auto offset = pads_to_realign + inner * contiguous_vecs + sg.get_local_linear_id();
+        local_vec_ptr[offset] = global_vec_ptr[offset];
+      }
+      // now go back and put them in the correct place
+      for (auto inner = pads_to_realign - 1; inner > 0; inner -= 1) {
+        const auto offset = pads_to_realign + inner * contiguous_vecs + sg.get_local_linear_id();
+        auto tmp = local_vec_ptr[offset];
+        sycl::group_barrier(sg);
+        local_vec_ptr[offset - (pads_to_realign - inner)] = tmp;
+      }
+      // copy the final one into place
+      local_vec_ptr[sg.get_local_linear_id()] = global_vec_ptr[sg.get_local_linear_id()];
+    }
+  } else {
+    global2local<level::WORKGROUP, SubgroupSize, Pad, BankLinesPerPad, T>(it, global, local, Size, global_offset, 0);
+  }
+}
+
 /**
  * Implementation of FFT for sizes that can be done by a workgroup.
  *
@@ -118,7 +178,10 @@ __attribute__((always_inline)) inline void workgroup_impl(const T* input, T* out
         sycl::group_barrier(it.get_group());
       }
     } else {
-      global2local<level::WORKGROUP, SubgroupSize, pad::DO_PAD, BankLinesPerPad>(it, input, loc, 2 * FFTSize, offset);
+      // global2local<level::WORKGROUP, SubgroupSize, pad::DO_PAD, BankLinesPerPad>(it, input, loc, 2 * FFTSize,
+      // offset);
+      async_fixed_global2local<2 * FFTSize, SubgroupSize, pad::DO_PAD, BankLinesPerPad>(it, input, loc, offset);
+
       sycl::group_barrier(it.get_group());
       wg_dft<Dir, FFTSize, N, M, SubgroupSize, BankLinesPerPad>(loc, loc_twiddles, wg_twiddles, it, scaling_factor);
       sycl::group_barrier(it.get_group());
