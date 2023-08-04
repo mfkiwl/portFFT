@@ -336,6 +336,17 @@ __attribute__((always_inline)) inline void local2private_transposed(const T* loc
   });
 }
 
+template <int num_elements_per_wi, typename T>
+__attribute__((always_inline)) inline void global2private_transposed(const T* global, T* priv, int thread_id, int col_num,
+                                                                    int stride) {
+  detail::unrolled_loop<0, num_elements_per_wi, 1>([&](const int i) __attribute__((always_inline)) {
+    int idx = 2 * (stride * (thread_id * num_elements_per_wi + i) +  col_num);
+    sycl::vec<T, 2> v = *reinterpret_cast<const sycl::vec<T, 2>*>(&global[idx]);
+    priv[2 * i] = v[0];
+    priv[2 * i + 1] = v[1];
+  });
+}
+
 /**
  * Stores data from the local memory to the global memory, in a transposed manner.
  * @tparam Pad Whether or not to consider local memory as padded
@@ -424,6 +435,22 @@ __attribute__((always_inline)) inline void private2local_transposed(const T* pri
         static_cast<std::size_t>(2 * stride * (i * num_workers + thread_id) + 2 * col_num), BankLinesPerPad);
     local[loc_base_offset] = priv[2 * i];
     local[loc_base_offset + 1] = priv[2 * i + 1];
+  });
+}
+
+template <direction Dir, int num_elements_per_wi, detail::pad Pad, std::size_t BankLinesPerPad, typename T>
+__attribute__((always_inline)) inline void private2local_transposed_mult(const T* priv, T* local, int thread_id,
+                                                                         int num_workers, int col_num, int stride) {
+  detail::unrolled_loop<0, num_elements_per_wi, 1>([&](const int i) __attribute__((always_inline)) {
+    std::size_t loc_base_offset = detail::pad_local<Pad>(
+        static_cast<std::size_t>(2 * stride * (i * num_workers + thread_id) + 2 * col_num), BankLinesPerPad);
+    T a = local[loc_base_offset];
+    T b = local[loc_base_offset + 1];
+    if constexpr (Dir == direction::BACKWARD) {
+      b = -b;
+    }
+    local[loc_base_offset] *= a * priv[2 * i] - b * priv[2 * i + 1];
+    local[loc_base_offset + 1] *= b * priv[2 * i] + a * priv[2 * i + 1];
   });
 }
 

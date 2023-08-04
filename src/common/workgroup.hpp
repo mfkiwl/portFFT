@@ -65,7 +65,7 @@ constexpr std::size_t bank_lines_per_pad_wg(std::size_t row_size) {
  * @param scaling_factor Scalar value with which the result is to be scaled
  */
 template <direction Dir, int FFTSize, int N, int M, int SubgroupSize, std::size_t BankLinesPerPad, typename T>
-__attribute__((always_inline)) inline void wg_dft(T* loc, T* loc_twiddles, const T* wg_twiddles, sycl::nd_item<1> it,
+__attribute__((always_inline)) inline void wg_dft(const T* global, T* loc, T* loc_twiddles, sycl::nd_item<1> it,
                                                   T scaling_factor) {
   // the number of work-items involved in every row subgroup fft
   constexpr int fact_sg_N = detail::factorize_sg(N, SubgroupSize);
@@ -118,7 +118,7 @@ __attribute__((always_inline)) inline void wg_dft(T* loc, T* loc_twiddles, const
         working = working && sg.get_local_linear_id() < max_working_tid_in_sg;
       }
       if (working) {
-        local2private_transposed<fact_wi_N, detail::pad::DO_PAD, BankLinesPerPad>(loc, priv, fft_local_id, column, M);
+        global2private_transposed<fact_wi_N>(global, priv, fft_local_id, column, M);
       }
       sg_dft<Dir, fact_wi_N, fact_sg_N>(priv, sg, loc_twiddles + (2 * M));
       if (working) {

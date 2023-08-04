@@ -71,7 +71,7 @@ std::size_t get_global_size_workgroup(std::size_t n_transforms, std::size_t subg
  * @param scaling_factor scaling factor applied to the result
  */
 template <direction Dir, detail::transpose TransposeIn, std::size_t FFTSize, int SubgroupSize, typename T>
-__attribute__((always_inline)) inline void workgroup_impl(const T* input, T* output, T* loc, T* loc_twiddles,
+__attribute__((always_inline)) inline void workgroup_impl(sycl::stream& s, const T* input, T* output, T* loc, T* loc_twiddles,
                                                           std::size_t n_transforms, sycl::nd_item<1> it,
                                                           const T* twiddles, T scaling_factor) {
   std::size_t num_workgroups = it.get_group_range(0);
@@ -95,6 +95,7 @@ __attribute__((always_inline)) inline void workgroup_impl(const T* input, T* out
 
   for (std::size_t offset = global_offset; offset <= max_global_offset; offset += offset_increment) {
     if constexpr (TransposeIn == detail::transpose::TRANSPOSED) {
+      return;
       const std::size_t num_batches_in_local_mem = [=]() {
         if (offset + it.get_local_range(0) / 2 < n_transforms) {
           return it.get_local_range(0) / 2;
@@ -107,7 +108,7 @@ __attribute__((always_inline)) inline void workgroup_impl(const T* input, T* out
                                                                               n_transforms, num_batches_in_local_mem);
       sycl::group_barrier(it.get_group());
       for (std::size_t i = 0; i < num_batches_in_local_mem; i++) {
-        wg_dft<Dir, FFTSize, N, M, SubgroupSize, BankLinesPerPad>(loc + i * 2 * FFTSize, loc_twiddles, wg_twiddles, it,
+        wg_dft<Dir, FFTSize, N, M, SubgroupSize, BankLinesPerPad>(input, loc + i * 2 * FFTSize, loc_twiddles, it,
                                                                   scaling_factor);
         sycl::group_barrier(it.get_group());
         // Once all batches in local memory have been processed, store all of them back to global memory in one go
@@ -118,8 +119,9 @@ __attribute__((always_inline)) inline void workgroup_impl(const T* input, T* out
         sycl::group_barrier(it.get_group());
       }
     } else {
-      global2local<level::WORKGROUP, SubgroupSize, pad::DO_PAD, BankLinesPerPad>(it, input, loc, 2 * FFTSize, offset);
-      sycl::group_barrier(it.get_group());
+     // global2local<level::WORKGROUP, SubgroupSize, pad::DO_PAD, BankLinesPerPad>(it, input, loc, 2 * FFTSize, offset);
+     // global2local<level::WORKGROUP, SubgroupSize, pad::DO_PAD, BankLinesPerPad>(it, wg_twiddles, loc, 2 * FFTSize);
+     // sycl::group_barrier(it.get_group());
       wg_dft<Dir, FFTSize, N, M, SubgroupSize, BankLinesPerPad>(loc, loc_twiddles, wg_twiddles, it, scaling_factor);
       sycl::group_barrier(it.get_group());
       local2global_transposed<detail::pad::DO_PAD, BankLinesPerPad>(it, N, M, M, loc, output, offset);
