@@ -94,7 +94,8 @@ __attribute__((always_inline)) inline void wg_dft(T* loc, T* loc_twiddles, const
           loc, priv, sg.get_local_linear_id() % static_cast<std::size_t>(FactSgM),
           static_cast<std::size_t>(2 * FactWiM), static_cast<std::size_t>(2 * M * sub_batch));
     }
-    detail::unrolled_loop<0, FactWiM, 1>([&](const int i) __attribute__((always_inline)) {
+#pragma unroll
+    for (int i = 0; i < FactWiM; i += 1) {
       int twiddle_n_index = sub_batch;
       int twiddle_m_index = (static_cast<int>(sg.get_local_linear_id()) % FactSgM) * FactWiM + i;
       int twiddle_index = 2 * M * twiddle_n_index + (2 * twiddle_m_index);
@@ -106,13 +107,14 @@ __attribute__((always_inline)) inline void wg_dft(T* loc, T* loc_twiddles, const
       T tmp_real = priv[2 * i];
       priv[2 * i] = tmp_real * twiddle_real - priv[2 * i + 1] * twiddle_imag;
       priv[2 * i + 1] = tmp_real * twiddle_imag + priv[2 * i + 1] * twiddle_real;
-    });
+    }
 
     sg_dft<Dir, FactWiM, FactSgM>(priv, sg, loc_twiddles);
-    detail::unrolled_loop<0, FactWiM, 1>([&](const int i) __attribute__((always_inline)) {
+#pragma unroll
+    for (int i = 0; i < FactWiM; i += 1) {
       priv[2 * i] *= scaling_factor;
       priv[2 * i + 1] *= scaling_factor;
-    });
+    }
 
     if (working) {
       store_transposed<2 * FactWiM, detail::pad::DO_PAD>(

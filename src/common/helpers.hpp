@@ -36,10 +36,10 @@ namespace portfft::detail {
  * __attribute__((always_inline)).
  */
 template <auto Start, auto Stop, auto Step, typename Functor>
-void __attribute__((always_inline)) unrolled_loop(Functor&& funct) {
+void __attribute__((always_inline)) unrolled_loop_bad(Functor&& funct) {
   if constexpr (Start < Stop) {
     funct(Start);
-    unrolled_loop<Start + Step, Stop, Step>(funct);
+    unrolled_loop_bad<Start + Step, Stop, Step>(funct);
   }
 }
 

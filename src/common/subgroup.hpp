@@ -99,7 +99,8 @@ __attribute__((always_inline)) inline void cross_sg_naive_dft(T& real, T& imag, 
     T res_real = 0;
     T res_imag = 0;
 
-    unrolled_loop<0, N, 1>([&](int idx_in) __attribute__((always_inline)) {
+#pragma unroll
+    for (int idx_in = 0; idx_in < N; idx_in += 1) {
       const T multi_re = twiddle<T>::Re[N][idx_in * idx_out % N];
       const T multi_im = [&]() __attribute__((always_inline)) {
         if constexpr (Dir == direction::FORWARD) {
@@ -116,7 +117,7 @@ __attribute__((always_inline)) inline void cross_sg_naive_dft(T& real, T& imag, 
       // multiply cur and multi
       res_real += cur_real * multi_re - cur_imag * multi_im;
       res_imag += cur_real * multi_im + cur_imag * multi_re;
-    });
+    }
 
     real = res_real;
     imag = res_imag;
@@ -272,7 +273,8 @@ template <direction Dir, int M, int N, typename T>
 __attribute__((always_inline)) inline void sg_dft(T* inout, sycl::sub_group& sg, const T* sg_twiddles) {
   int idx_of_wi_in_fft = static_cast<int>(sg.get_local_linear_id()) % N;
 
-  detail::unrolled_loop<0, M, 1>([&](int idx_of_element_in_wi) __attribute__((always_inline)) {
+#pragma unroll
+  for (int idx_of_element_in_wi = 0; idx_of_element_in_wi < M; idx_of_element_in_wi += 1) {
     T& real = inout[2 * idx_of_element_in_wi];
     T& imag = inout[2 * idx_of_element_in_wi + 1];
 
@@ -289,7 +291,7 @@ __attribute__((always_inline)) inline void sg_dft(T* inout, sycl::sub_group& sg,
         real = tmp_real;
       }
     }
-  });
+  }
 
   wi_dft<Dir, M, 1, 1>(inout, inout);
 }

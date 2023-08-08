@@ -157,10 +157,11 @@ __attribute__((always_inline)) inline void subgroup_impl(const T* input, T* outp
                                                                   static_cast<int>(max_num_batches_local_mem));
         }
         sg_dft<Dir, FactorWI, FactorSG>(priv, sg, loc_twiddles);
-        unrolled_loop<0, NRealsPerWi, 2>([&](int idx) __attribute__((always_inline)) {
+#pragma unroll
+        for (int idx = 0; idx < NRealsPerWi; idx += 2) {
           priv[idx] *= scaling_factor;
           priv[idx + 1] *= scaling_factor;
-        });
+        }
         if constexpr (SubgroupSize == FactorSG) {
           if (working_inner) {
             // Store directly from registers for fully coalesced accesses
@@ -197,10 +198,11 @@ __attribute__((always_inline)) inline void subgroup_impl(const T* input, T* outp
       sycl::group_barrier(sg);
 
       sg_dft<Dir, FactorWI, FactorSG>(priv, sg, loc_twiddles);
-      unrolled_loop<0, NRealsPerWi, 2>([&](int i) __attribute__((always_inline)) {
+#pragma unroll
+      for (int i = 0; i < NRealsPerWi; i += 2) {
         priv[i] *= scaling_factor;
         priv[i + 1] *= scaling_factor;
-      });
+      }
       if constexpr (FactorSG == SubgroupSize) {
         // in this case we get fully coalesced memory access even without going through local memory
         // TODO we may want to tune maximal `FactorSG` for which we use direct stores.

@@ -96,18 +96,20 @@ __attribute__((always_inline)) inline void workitem_impl(const T* input, T* outp
       if constexpr (TransposeIn == detail::transpose::TRANSPOSED) {
         // Load directly into registers from global memory as all loads will be fully coalesced.
         // No need of going through local memory either as it is an unnecessary extra write step.
-        unrolled_loop<0, NReals, 2>([&](const std::size_t j) __attribute__((always_inline)) {
+#pragma unroll
+        for (std::size_t j = 0; j < NReals; j += 2) {
           using T_vec = sycl::vec<T, 2>;
           reinterpret_cast<T_vec*>(&priv[j])->load(0, detail::get_global_multi_ptr(&input[i * 2 + j * n_transforms]));
-        });
+        }
       } else {
         local2private<NReals, pad::DO_PAD>(loc, priv, subgroup_local_id, NReals, local_offset);
       }
       wi_dft<Dir, N, 1, 1>(priv, priv);
-      unrolled_loop<0, NReals, 2>([&](int i) __attribute__((always_inline)) {
+#pragma unroll
+      for (int i = 0; i < NReals; i += 2) {
         priv[i] *= scaling_factor;
         priv[i + 1] *= scaling_factor;
-      });
+      }
       private2local<NReals, pad::DO_PAD>(priv, loc, subgroup_local_id, NReals, local_offset);
     }
     sycl::group_barrier(sg);

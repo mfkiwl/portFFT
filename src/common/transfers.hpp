@@ -115,16 +115,18 @@ __attribute__((always_inline)) inline void global2local(sycl::nd_item<1> it, con
   for (std::size_t i = 0; i < rounded_down_num_elems; i += stride) {
     T_vec loaded = sg.load<ChunkSize>(detail::get_global_multi_ptr(&global[global_offset + i]));
     if constexpr (PORTFFT_N_LOCAL_BANKS % SubgroupSize == 0 || Pad == detail::pad::DONT_PAD) {
-      detail::unrolled_loop<0, ChunkSize, 1>([&](int j) __attribute__((always_inline)) {
+#pragma unroll
+      for (int j = 0; j < ChunkSize; j += 1) {
         std::size_t local_idx = detail::pad_local<Pad>(local_offset + i + static_cast<std::size_t>(j) * local_size);
         sg.store(detail::get_local_multi_ptr(&local[local_idx]), loaded[j]);
-      });
+      }
     } else {
-      detail::unrolled_loop<0, ChunkSize, 1>([&](int j) __attribute__((always_inline)) {
+#pragma unroll
+      for (int j = 0; j < ChunkSize; j += 1) {
         std::size_t local_idx =
             detail::pad_local<Pad>(local_offset + i + static_cast<std::size_t>(j) * local_size + local_id);
         local[local_idx] = loaded[j];
-      });
+      }
     }
   }
 #else
@@ -145,10 +147,11 @@ __attribute__((always_inline)) inline void global2local(sycl::nd_item<1> it, con
   for (std::size_t i = local_id * ChunkSize; i < rounded_down_num_elems; i += stride) {
     T_vec loaded;
     loaded.load(0, detail::get_global_multi_ptr(&global[global_offset + i]));
-    detail::unrolled_loop<0, ChunkSize, 1>([&](int j) __attribute__((always_inline)) {
+#pragma unroll
+    for (int j = 0; j < ChunkSize; j += 1) {
       std::size_t local_idx = detail::pad_local<Pad>(local_offset + i + static_cast<std::size_t>(j));
       local[local_idx] = loaded[j];
-    });
+    }
   }
 #endif
   // We can not load `ChunkSize`-sized chunks anymore, so we load the largest we can - `last_chunk_size`-sized one
@@ -223,16 +226,18 @@ __attribute__((always_inline)) inline void local2global(sycl::nd_item<1> it, con
   for (std::size_t i = 0; i < rounded_down_num_elems; i += stride) {
     T_vec to_store;
     if constexpr (PORTFFT_N_LOCAL_BANKS % SubgroupSize == 0 || Pad == detail::pad::DONT_PAD) {
-      detail::unrolled_loop<0, ChunkSize, 1>([&](int j) __attribute__((always_inline)) {
+#pragma unroll
+      for (int j = 0; j < ChunkSize; j += 1) {
         std::size_t local_idx = detail::pad_local<Pad>(local_offset + i + static_cast<std::size_t>(j) * local_size);
         to_store[j] = sg.load(detail::get_local_multi_ptr(&local[local_idx]));
-      });
+      }
     } else {
-      detail::unrolled_loop<0, ChunkSize, 1>([&](int j) __attribute__((always_inline)) {
+#pragma unroll
+      for (int j = 0; j < ChunkSize; j += 1) {
         std::size_t local_idx =
             detail::pad_local<Pad>(local_offset + i + static_cast<std::size_t>(j) * local_size + local_id);
         to_store[j] = local[local_idx];
-      });
+      }
     }
     sg.store(detail::get_global_multi_ptr(&global[global_offset + i]), to_store);
   }
@@ -253,10 +258,11 @@ __attribute__((always_inline)) inline void local2global(sycl::nd_item<1> it, con
   // Each workitem stores a chunk of `ChunkSize` consecutive elements. Chunks stored by a group are consecutive.
   for (std::size_t i = local_id * ChunkSize; i < rounded_down_num_elems; i += stride) {
     T_vec to_store;
-    detail::unrolled_loop<0, ChunkSize, 1>([&](int j) __attribute__((always_inline)) {
+#pragma unroll
+    for (int j = 0; j < ChunkSize; j += 1) {
       std::size_t local_idx = detail::pad_local<Pad>(local_offset + i + static_cast<std::size_t>(j));
       to_store[j] = local[local_idx];
-    });
+    }
     to_store.store(0, detail::get_global_multi_ptr(&global[global_offset + i]));
   }
 #endif
@@ -292,10 +298,11 @@ __attribute__((always_inline)) inline void local2global(sycl::nd_item<1> it, con
 template <std::size_t NumElemsPerWI, detail::pad Pad, typename T>
 __attribute__((always_inline)) inline void local2private(const T* local, T* priv, std::size_t local_id,
                                                          std::size_t stride, std::size_t local_offset = 0) {
-  detail::unrolled_loop<0, NumElemsPerWI, 1>([&](std::size_t i) __attribute__((always_inline)) {
+#pragma unroll
+  for (std::size_t i = 0; i < NumElemsPerWI; i += 1) {
     std::size_t local_idx = detail::pad_local<Pad>(local_offset + local_id * stride + i);
     priv[i] = local[local_idx];
-  });
+  }
 }
 
 /**
@@ -314,12 +321,13 @@ __attribute__((always_inline)) inline void local2private(const T* local, T* priv
 template <int NumElementsPerWI, detail::pad Pad, typename T>
 __attribute__((always_inline)) inline void local2private_transposed(const T* local, T* priv, int thread_id, int col_num,
                                                                     int stride) {
-  detail::unrolled_loop<0, NumElementsPerWI, 1>([&](const int i) __attribute__((always_inline)) {
+#pragma unroll
+  for (int i = 0; i < NumElementsPerWI; i += 1) {
     std::size_t local_idx =
         detail::pad_local<Pad>(static_cast<std::size_t>(2 * stride * (thread_id * NumElementsPerWI + i) + 2 * col_num));
     priv[2 * i] = local[local_idx];
     priv[2 * i + 1] = local[local_idx + 1];
-  });
+  }
 }
 
 /**
@@ -402,12 +410,13 @@ __attribute__((always_inline)) inline void global2local_transposed(sycl::nd_item
 template <int NumElementsPerWI, detail::pad Pad, typename T>
 __attribute__((always_inline)) inline void private2local_transposed(const T* priv, T* local, int thread_id,
                                                                     int num_workers, int col_num, int stride) {
-  detail::unrolled_loop<0, NumElementsPerWI, 1>([&](const int i) __attribute__((always_inline)) {
+#pragma unroll
+  for (int i = 0; i < NumElementsPerWI; i += 1) {
     std::size_t loc_base_offset =
         detail::pad_local<Pad>(static_cast<std::size_t>(2L * stride * (i * num_workers + thread_id) + 2L * col_num));
     local[loc_base_offset] = priv[2 * i];
     local[loc_base_offset + 1] = priv[2 * i + 1];
-  });
+  }
 }
 
 /**
@@ -427,10 +436,11 @@ __attribute__((always_inline)) inline void private2local_transposed(const T* pri
 template <std::size_t NumElemsPerWI, detail::pad Pad, typename T>
 __attribute__((always_inline)) inline void private2local(const T* priv, T* local, std::size_t local_id,
                                                          std::size_t stride, std::size_t local_offset = 0) {
-  detail::unrolled_loop<0, NumElemsPerWI, 1>([&](std::size_t i) __attribute__((always_inline)) {
+#pragma unroll
+  for (std::size_t i = 0; i < NumElemsPerWI; i += 1) {
     std::size_t local_idx = detail::pad_local<Pad>(local_offset + local_id * stride + i);
     local[local_idx] = priv[i];
-  });
+  }
 }
 
 /**
@@ -456,7 +466,8 @@ __attribute__((always_inline)) inline void store_transposed(const T* priv, T* de
   const T_vec* priv_vec = reinterpret_cast<const T_vec*>(priv);
   T_vec* destination_vec = reinterpret_cast<T_vec*>(&destination[0]);
 
-  detail::unrolled_loop<0, NumElemsPerWI, 2>([&](int i) __attribute__((always_inline)) {
+#pragma unroll
+  for (int i = 0; i < NumElemsPerWI; i += 2) {
     std::size_t destination_idx =
         detail::pad_local<Pad>(destination_offset + local_id * 2 + static_cast<std::size_t>(i) * workers_in_group);
     if (destination_idx % 2 == 0) {  // if the destination address is aligned, we can use vector store
@@ -465,7 +476,7 @@ __attribute__((always_inline)) inline void store_transposed(const T* priv, T* de
       destination[destination_idx] = priv[i];
       destination[destination_idx + 1] = priv[i + 1];
     }
-  });
+  }
 }
 };  // namespace portfft
 
