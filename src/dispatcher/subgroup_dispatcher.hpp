@@ -115,9 +115,9 @@ __attribute__((always_inline)) inline void subgroup_impl(const T* input, T* outp
   global2local<pad::DONT_PAD, level::WORKGROUP, SubgroupSize>(it, twiddles, loc_twiddles, NRealsPerWi * FactorSG);
   sycl::group_barrier(it.get_group());
 
-  for (std::size_t i = id_of_fft_in_kernel; i < rounded_up_n_ffts; i += n_ffts_in_kernel) {
-    bool working = subgroup_local_id < max_wis_working && i < n_transforms;
-    std::size_t n_ffts_worked_on_by_sg = sycl::min(n_transforms - (i - id_of_fft_in_sg), n_ffts_per_sg);
+  for (std::size_t t = id_of_fft_in_kernel; t < rounded_up_n_ffts; t += n_ffts_in_kernel) {
+    bool working = subgroup_local_id < max_wis_working && t < n_transforms;
+    std::size_t n_ffts_worked_on_by_sg = sycl::min(n_transforms - (t - id_of_fft_in_sg), n_ffts_per_sg);
 
     if constexpr (TransposeIn == detail::transpose::TRANSPOSED) {
       /**
@@ -133,10 +133,10 @@ __attribute__((always_inline)) inline void subgroup_impl(const T* input, T* outp
       std::size_t id_of_fft_in_sub_batch = sg.get_group_id() * n_ffts_per_sg + id_of_fft_in_sg;
       std::size_t max_num_batches_local_mem = n_sgs_in_wg * SubgroupSize / 2;
       std::size_t num_batches_in_local_mem = [=]() {
-        if (i + it.get_local_range(0) / 2 < n_transforms) {
+        if (t + it.get_local_range(0) / 2 < n_transforms) {
           return it.get_local_range(0) / 2;
         }
-        return n_transforms - i;
+        return n_transforms - t;
        
       }();
       std::size_t rounded_up_sub_batches = detail::round_up_to_multiple(num_batches_in_local_mem, n_ffts_per_sg);
@@ -144,7 +144,7 @@ __attribute__((always_inline)) inline void subgroup_impl(const T* input, T* outp
       if (it.get_local_linear_id() / 2 < num_batches_in_local_mem) {
         // load / store in a transposed manner
         global2local_transposed<detail::pad::DO_PAD, detail::level::WORKGROUP, T>(
-            it, input, loc, 2 * i, FactorWI * FactorSG, n_transforms, max_num_batches_local_mem);
+            it, input, loc, 2 * t, FactorWI * FactorSG, n_transforms, max_num_batches_local_mem);
       }
       sycl::group_barrier(it.get_group());
       for (std::size_t sub_batch = id_of_fft_in_sub_batch; sub_batch < rounded_up_sub_batches;
@@ -166,7 +166,7 @@ __attribute__((always_inline)) inline void subgroup_impl(const T* input, T* outp
           if (working_inner) {
             // Store directly from registers for fully coalesced accesses
             store_transposed<NRealsPerWi, detail::pad::DONT_PAD>(priv, output, id_of_wi_in_fft, FactorSG,
-                                                                 (i + sub_batch) * n_reals_per_fft);
+                                                                 (t + sub_batch) * n_reals_per_fft);
           }
         } else {
           if (working_inner) {
@@ -180,14 +180,14 @@ __attribute__((always_inline)) inline void subgroup_impl(const T* input, T* outp
       if constexpr (SubgroupSize != FactorSG) {
         // store back all loaded batches at once.
         local2global_transposed<detail::pad::DO_PAD>(it, FactorWI * FactorSG, num_batches_in_local_mem,
-                                                     max_num_batches_local_mem, loc, output, i * n_reals_per_fft);
+                                                     max_num_batches_local_mem, loc, output, t * n_reals_per_fft);
       }
       sycl::group_barrier(it.get_group());
     } else {
       // Codepath taken if input is not transposed
 
       global2local<pad::DO_PAD, level::SUBGROUP, SubgroupSize>(it, input, loc, n_ffts_worked_on_by_sg * n_reals_per_fft,
-                                                               n_reals_per_fft * (i - id_of_fft_in_sg),
+                                                               n_reals_per_fft * (t - id_of_fft_in_sg),
                                                                subgroup_id * n_reals_per_sg);
 
       sycl::group_barrier(sg);
@@ -208,7 +208,7 @@ __attribute__((always_inline)) inline void subgroup_impl(const T* input, T* outp
         // TODO we may want to tune maximal `FactorSG` for which we use direct stores.
         if (working) {
           store_transposed<NRealsPerWi, pad::DONT_PAD>(priv, output, id_of_wi_in_fft, FactorSG,
-                                                       i * n_reals_per_sg + id_of_fft_in_sg * n_reals_per_fft);
+                                                       t * n_reals_per_sg + id_of_fft_in_sg * n_reals_per_fft);
         }
       } else {
         if (working) {
@@ -218,7 +218,7 @@ __attribute__((always_inline)) inline void subgroup_impl(const T* input, T* outp
         sycl::group_barrier(sg);
         local2global<pad::DO_PAD, level::SUBGROUP, SubgroupSize>(
             it, loc, output, n_ffts_worked_on_by_sg * n_reals_per_fft, subgroup_id * n_reals_per_sg,
-            n_reals_per_fft * (i - id_of_fft_in_sg));
+            n_reals_per_fft * (t - id_of_fft_in_sg));
         sycl::group_barrier(sg);
       }
     }

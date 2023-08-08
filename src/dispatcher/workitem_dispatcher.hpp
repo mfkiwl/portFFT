@@ -83,13 +83,13 @@ __attribute__((always_inline)) inline void workitem_impl(const T* input, T* outp
   std::size_t subgroup_id = sg.get_group_id();
   std::size_t local_offset = NReals * SubgroupSize * subgroup_id;
 
-  for (std::size_t i = global_id; i < round_up_to_multiple(n_transforms, SubgroupSize); i += global_size) {
-    bool working = i < n_transforms;
-    std::size_t n_working = sycl::min(SubgroupSize, n_transforms - i + subgroup_local_id);
+  for (std::size_t t = global_id; t < round_up_to_multiple(n_transforms, SubgroupSize); t += global_size) {
+    bool working = t < n_transforms;
+    std::size_t n_working = sycl::min(SubgroupSize, n_transforms - t + subgroup_local_id);
 
     if constexpr (TransposeIn == detail::transpose::NOT_TRANSPOSED) {
       global2local<pad::DO_PAD, level::SUBGROUP, SubgroupSize>(it, input, loc, NReals * n_working,
-                                                               NReals * (i - subgroup_local_id), local_offset);
+                                                               NReals * (t - subgroup_local_id), local_offset);
       sycl::group_barrier(sg);
     }
     if (working) {
@@ -99,7 +99,7 @@ __attribute__((always_inline)) inline void workitem_impl(const T* input, T* outp
 #pragma unroll
         for (std::size_t j = 0; j < NReals; j += 2) {
           using T_vec = sycl::vec<T, 2>;
-          reinterpret_cast<T_vec*>(&priv[j])->load(0, detail::get_global_multi_ptr(&input[i * 2 + j * n_transforms]));
+          reinterpret_cast<T_vec*>(&priv[j])->load(0, detail::get_global_multi_ptr(&input[t * 2 + j * n_transforms]));
         }
       } else {
         local2private<NReals, pad::DO_PAD>(loc, priv, subgroup_local_id, NReals, local_offset);
@@ -116,7 +116,7 @@ __attribute__((always_inline)) inline void workitem_impl(const T* input, T* outp
     // Store back to global in the same manner irrespective of input data layout, as
     //  the transposed case is assumed to be used only in OOP scenario.
     local2global<pad::DO_PAD, level::SUBGROUP, SubgroupSize>(it, loc, output, NReals * n_working, local_offset,
-                                                             NReals * (i - subgroup_local_id));
+                                                             NReals * (t - subgroup_local_id));
     sycl::group_barrier(sg);
   }
 }
