@@ -88,7 +88,9 @@ IdxGlobal get_global_size_subgroup(IdxGlobal n_transforms, Idx factor_sg, Idx su
  */
 template <direction Dir, Idx SubgroupSize, detail::layout LayoutIn, detail::layout LayoutOut, typename T>
 PORTFFT_INLINE void subgroup_impl(const T* input, T* output, const T* input_imag, T* output_imag, T* loc,
-                                  T* loc_twiddles, IdxGlobal n_transforms, const T* twiddles, T scaling_factor,
+                                  T* loc_twiddles, IdxGlobal n_transforms, IdxGlobal /*input_stride*/,
+                                  IdxGlobal /*output_stride*/, IdxGlobal /*input_distance*/,
+                                  IdxGlobal /*output_distance*/, const T* twiddles, T scaling_factor,
                                   global_data_struct<1> global_data, sycl::kernel_handler& kh,
                                   const T* load_modifier_data = nullptr, const T* store_modifier_data = nullptr,
                                   T* loc_load_modifier = nullptr, T* loc_store_modifier = nullptr) {
@@ -607,8 +609,9 @@ struct committed_descriptor<Scalar, Domain>::run_kernel_struct<Dir, LayoutIn, La
                                                                TOut>::inner<detail::level::SUBGROUP, Dummy> {
   static sycl::event execute(committed_descriptor& desc, const TIn& in, TOut& out, const TIn& in_imag, TOut& out_imag,
                              const std::vector<sycl::event>& dependencies, IdxGlobal n_transforms,
-                             IdxGlobal input_offset, IdxGlobal output_offset, Scalar scale_factor,
-                             dimension_struct& dimension_data) {
+                             IdxGlobal input_offset, IdxGlobal output_offset, IdxGlobal input_stride,
+                             IdxGlobal output_stride, IdxGlobal input_distance, IdxGlobal output_distance,
+                             Scalar scale_factor, dimension_struct& dimension_data) {
     constexpr detail::memory Mem = std::is_pointer_v<TOut> ? detail::memory::USM : detail::memory::BUFFER;
     auto& kernel_data = dimension_data.kernels.at(0);
     Scalar* twiddles = kernel_data.twiddles_forward.get();
@@ -643,7 +646,8 @@ struct committed_descriptor<Scalar, Domain>::run_kernel_struct<Dir, LayoutIn, La
             detail::subgroup_impl<Dir, SubgroupSize, LayoutIn, LayoutOut>(
                 &in_acc_or_usm[0] + input_offset, &out_acc_or_usm[0] + output_offset,
                 &in_imag_acc_or_usm[0] + input_offset, &out_imag_acc_or_usm[0] + output_offset, &loc[0],
-                &loc_twiddles[0], n_transforms, twiddles, scale_factor, global_data, kh);
+                &loc_twiddles[0], n_transforms, input_stride, output_stride, input_distance, output_distance, twiddles,
+                scale_factor, global_data, kh);
             global_data.log_message_global("Exiting subgroup kernel");
           });
     });

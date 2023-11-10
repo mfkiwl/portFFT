@@ -727,14 +727,16 @@ class committed_descriptor {
       if (!supported_layout) {
         throw unsupported_configuration("Multi-dimensional transforms are only supported with default data layout");
       }
-    } else {
-      const bool supported_layout =
-          (forward_layout == detail::layout::PACKED || forward_layout == detail::layout::BATCH_INTERLEAVED) &&
-          (backward_layout == detail::layout::PACKED || backward_layout == detail::layout::BATCH_INTERLEAVED);
-      if (!supported_layout) {
-        throw unsupported_configuration("Arbitary strides are not supported");
-      }
     }
+    // TODO verify the stride parameters meet expectations
+    //  else {
+    //    const bool supported_layout =
+    //        (forward_layout == detail::layout::PACKED || forward_layout == detail::layout::BATCH_INTERLEAVED) &&
+    //        (backward_layout == detail::layout::PACKED || backward_layout == detail::layout::BATCH_INTERLEAVED);
+    //    if (!supported_layout) {
+    //      throw unsupported_configuration("Arbitary strides are not supported");
+    //    }
+    //  }
 
     // compile the kernels and precalculate twiddles
     std::size_t n_kernels = params.lengths.size();
@@ -1166,18 +1168,11 @@ class committed_descriptor {
     std::size_t outer_size = total_size / params.lengths.back();
     std::size_t input_stride_0 = input_strides.back();
     std::size_t output_stride_0 = output_strides.back();
-    // distances are currently used just in the first dimension - these changes are meant for that one
-    // TODO fix this to support non-default layouts
-    if (input_stride_0 < input_distance) {  // for example: batch interleaved input
-      input_distance = params.lengths.back();
-    }
-    if (output_stride_0 < output_distance) {  // for example: batch interleaved output
-      output_distance = params.lengths.back();
-    }
 
     sycl::event previous_event = dispatch_kernel_1d<Dir>(
         in, out, in_imag, out_imag, dependencies, params.number_of_transforms * outer_size, input_stride_0,
-        output_stride_0, input_distance, output_distance, input_offset, output_offset, scale_factor, dimensions.back());
+        output_stride_0, input_distance / outer_size, output_distance / outer_size, input_offset, output_offset,
+        scale_factor, dimensions.back());
     if (n_dimensions == 1) {
       return previous_event;
     }
@@ -1278,11 +1273,9 @@ class committed_descriptor {
     if (SubgroupSize == dimension_data.used_sg_size) {
       const bool input_packed = input_distance == dimension_data.length && input_stride == 1;
       const bool output_packed = output_distance == dimension_data.length && output_stride == 1;
-      const bool input_batch_interleaved = input_distance == 1 && input_stride == n_transforms;
-      const bool output_batch_interleaved = output_distance == 1 && output_stride == n_transforms;
       for (kernel_data_struct kernel_data : dimension_data.kernels) {
         std::size_t minimum_local_mem_required;
-        if (input_batch_interleaved) {
+        if (!input_packed) {
           minimum_local_mem_required = num_scalars_in_local_mem<detail::layout::BATCH_INTERLEAVED>(
                                            kernel_data.level, kernel_data.length, SubgroupSize, kernel_data.factors,
                                            kernel_data.num_sgs_per_wg) *
@@ -1294,25 +1287,27 @@ class committed_descriptor {
           }
         }
       }
+
+      const bool is_in_place = in == out;
       if (input_packed && output_packed) {
         return run_kernel<Dir, detail::layout::PACKED, detail::layout::PACKED, SubgroupSize>(
-            in, out, in_imag, out_imag, dependencies, n_transforms, input_offset, output_offset, scale_factor,
-            dimension_data);
+            in, out, in_imag, out_imag, dependencies, n_transforms, input_offset, output_offset, 1, 1,
+            dimension_data.length, dimension_data.length, scale_factor, dimension_data);
       }
-      if (input_batch_interleaved && output_packed && in != out) {
+      if (!input_packed && output_packed && !is_in_place) {
         return run_kernel<Dir, detail::layout::BATCH_INTERLEAVED, detail::layout::PACKED, SubgroupSize>(
-            in, out, in_imag, out_imag, dependencies, n_transforms, input_offset, output_offset, scale_factor,
-            dimension_data);
+            in, out, in_imag, out_imag, dependencies, n_transforms, input_offset, output_offset, input_stride, 1,
+            input_distance, dimension_data.length, scale_factor, dimension_data);
       }
-      if (input_packed && output_batch_interleaved && in != out) {
+      if (input_packed && !output_packed && !is_in_place) {
         return run_kernel<Dir, detail::layout::PACKED, detail::layout::BATCH_INTERLEAVED, SubgroupSize>(
-            in, out, in_imag, out_imag, dependencies, n_transforms, input_offset, output_offset, scale_factor,
-            dimension_data);
+            in, out, in_imag, out_imag, dependencies, n_transforms, input_offset, output_offset, 1, output_stride,
+            dimension_data.length, output_distance, scale_factor, dimension_data);
       }
-      if (input_batch_interleaved && output_batch_interleaved) {
+      if (!input_packed && !output_packed) {
         return run_kernel<Dir, detail::layout::BATCH_INTERLEAVED, detail::layout::BATCH_INTERLEAVED, SubgroupSize>(
-            in, out, in_imag, out_imag, dependencies, n_transforms, input_offset, output_offset, scale_factor,
-            dimension_data);
+            in, out, in_imag, out_imag, dependencies, n_transforms, input_offset, output_offset, input_stride,
+            output_stride, input_distance, output_distance, scale_factor, dimension_data);
       }
       throw unsupported_configuration("Only PACKED or BATCH_INTERLEAVED transforms are supported");
     }
@@ -1377,8 +1372,9 @@ class committed_descriptor {
             typename TOut>
   sycl::event run_kernel(const TIn& in, TOut& out, const TIn& in_imag, TOut& out_imag,
                          const std::vector<sycl::event>& dependencies, std::size_t n_transforms,
-                         std::size_t input_offset, std::size_t output_offset, Scalar scale_factor,
-                         dimension_struct& dimension_data) {
+                         std::size_t input_offset, std::size_t output_offset, std::size_t input_stride,
+                         std::size_t output_stride, std::size_t input_distance, std::size_t output_distance,
+                         Scalar scale_factor, dimension_struct& dimension_data) {
     // mixing const and non-const inputs leads to hard-to-debug linking errors, as both use the same kernel name, but
     // are called from different template instantiations.
     static_assert(!std::is_pointer_v<TIn> || std::is_const_v<std::remove_pointer_t<TIn>>,
@@ -1395,7 +1391,9 @@ class committed_descriptor {
         dimension_data.level, detail::reinterpret<const Scalar>(in), detail::reinterpret<Scalar>(out),
         detail::reinterpret<const Scalar>(in_imag), detail::reinterpret<Scalar>(out_imag), dependencies,
         static_cast<IdxGlobal>(n_transforms), static_cast<IdxGlobal>(vec_multiplier * input_offset),
-        static_cast<IdxGlobal>(vec_multiplier * output_offset), scale_factor, dimension_data);
+        static_cast<IdxGlobal>(vec_multiplier * output_offset), static_cast<IdxGlobal>(input_stride),
+        static_cast<IdxGlobal>(output_stride), static_cast<IdxGlobal>(input_distance),
+        static_cast<IdxGlobal>(output_distance), scale_factor, dimension_data);
   }
 };
 
@@ -1628,6 +1626,143 @@ struct descriptor {
     }
     return offset + last_elt_idx + 1;
   }
+
+  // TODO add this stuff
+  //   /**
+  //    * Throw an exception if the given stride and distance are invalid for any direction.
+  //    *
+  //    * @param strides strides to check
+  //    * @param distance distance to check
+  //    * @param dir_str direction string for errors
+  //    */
+  //   void validate_strides_distance(const std::vector<std::size_t>& strides, std::size_t distance,
+  //                                  const std::string& dir_str) const {
+  //     // Validate stride
+  //     std::size_t expected_num_strides = lengths.size();
+  //     if (strides.size() != expected_num_strides) {
+  //       throw invalid_configuration("Mismatching ", dir_str, " strides length got ", strides.size(), " expected ",
+  //                                   expected_num_strides);
+  //     }
+  //     for (std::size_t i = 1; i < strides.size(); ++i) {
+  //       if (strides[i] == 0) {
+  //         throw invalid_configuration("Invalid ", dir_str, " stride[", strides[i], "]=", strides[i],
+  //                                     ", must be positive");
+  //       }
+  //     }
+  //
+  //     // Validate distance
+  //     if (number_of_transforms > 1 && distance == 0) {
+  //       throw invalid_configuration("Invalid ", dir_str, " distance ", distance, ", must be positive for batched
+  //       FFTs");
+  //     }
+  //   }
+  //
+  //   /**
+  //    * Require the same input and output strides and distance for in-place configurations.
+  //    */
+  //   void validate_strides_distance_in_place() const {
+  //     if (placement != placement::IN_PLACE) {
+  //       return;
+  //     }
+  //
+  //     if (forward_strides != backward_strides) {
+  //       throw invalid_configuration("Invalid forward and backward strides must match for in-place configurations");
+  //     }
+  //
+  //     if (forward_distance != backward_distance) {
+  //       throw invalid_configuration("Invalid forward and backward distances must match for in-place configurations");
+  //     }
+  //   }
+  //
+  //   /**
+  //    * Check that out-of-place FFTs don't overlap.
+  //    * Two input indices must not write to the same output index.
+  //    * Only supports 1D C2C transforms for now.
+  //    *
+  //    * @param dir Direction
+  //    * @return An empty string if the FFT is valid for the given direction. Otherwise returns an error message.
+  //    */
+  //   std::string validate_overlap(direction dir) const {
+  //     // TODO: Add support for R2C transforms
+  //     if (Domain == domain::REAL) {
+  //       return "REAL domain is unsupported";
+  //     }
+  //
+  //     const auto& output_strides = get_strides(inv(dir));
+  //     const std::size_t output_distance = get_distance(inv(dir));
+  //
+  //     // Quick check for most common configurations.
+  //     // This check has some false-negative for some impractical configurations, see ArbitraryInterleavedTest.
+  //     // View the output data as a N+1 dimensional tensor for a N-dimension FFT: the number of batch is just another
+  //     // dimension with a stride of 'distance'. This sorts the dimensions from fastest moving (inner-most) to slowest
+  //     // moving (outer-most) and check that the stride of a dimension is large enough to avoid overlapping the
+  //     previous
+  //     // dimension.
+  //     std::vector<std::size_t> generic_output_strides(output_strides);
+  //     std::vector<std::size_t> generic_output_sizes = lengths;
+  //     if (number_of_transforms > 1) {
+  //       generic_output_strides.push_back(output_distance);
+  //       generic_output_sizes.push_back(number_of_transforms);
+  //     }
+  //     std::vector<std::size_t> indices(generic_output_sizes.size());
+  //     std::iota(indices.begin(), indices.end(), 0);
+  //     std::sort(indices.begin(), indices.end(),
+  //               [&](std::size_t a, std::size_t b) { return generic_output_strides[a] < generic_output_strides[b]; });
+  //     bool generic_valid = true;
+  //     for (std::size_t i = 1; i < indices.size(); ++i) {
+  //       generic_valid = generic_valid && generic_output_strides[indices[i - 1]] * generic_output_sizes[indices[i -
+  //       1]] <=
+  //                                            generic_output_strides[indices[i]];
+  //     }
+  //     if (generic_valid) {
+  //       return "";
+  //     }
+  //
+  //     // Arbitrary interleaved configurations are not supported for multiple-dimensions.
+  //     if (lengths.size() != 1) {
+  //       return "multi-dim FFTs are unsupported";
+  //     }
+  //
+  //     // Strides or distance differ for the input and output.
+  //     // Compute the output indices for multiple batches and input index and work backward to determine if another
+  //     batch
+  //     // and input index will write to the same location.
+  //     // TODO: Test for input_offset and output_offset > 0
+  //     const auto& input_strides = get_strides(dir);
+  //     const std::size_t input_distance = get_distance(dir);
+  //     std::size_t fft_size = lengths[0];
+  //     std::size_t input_offset = 0;
+  //     std::size_t input_stride = input_strides[0];
+  //     std::size_t output_offset = 0;
+  //     std::size_t output_stride = output_strides[0];
+  //     for (std::size_t b = 0; b < number_of_transforms; ++b) {
+  //       for (std::size_t i = 0; i < fft_size; ++i) {
+  //         std::size_t linear_input_idx = input_offset + b * input_distance + i * input_stride;
+  //         std::size_t linear_output_idx = output_offset + b * output_distance + i * output_stride;
+  //         // Check if another batch will write to the same output index.
+  //         for (std::size_t other_b = b + 1; other_b < number_of_transforms; ++other_b) {
+  //           std::size_t other_linear_output_idx = output_offset + other_b * output_distance;
+  //           std::size_t diff = other_linear_output_idx > linear_output_idx ? other_linear_output_idx -
+  //           linear_output_idx
+  //                                                                          : linear_output_idx -
+  //                                                                          other_linear_output_idx;
+  //           if (diff % output_stride == 0) {
+  //             std::size_t other_i = diff / output_stride;
+  //             if (other_i < fft_size) {
+  //               std::size_t other_linear_input_idx = input_offset + other_b * input_distance + other_i *
+  //               input_stride; std::stringstream ss; ss << "Found overlapping output for batch=" << b << " index=" <<
+  //               i
+  //                  << " (linear index=" << linear_input_idx << ") and other batch=" << other_b
+  //                  << " other index=" << other_i << " (other linear index=" << other_linear_input_idx
+  //                  << ") both writing at the output linear index=" << linear_output_idx;
+  //               return ss.str();
+  //             }
+  //           }
+  //         }
+  //       }  // end of loop on input indices
+  //     }    // end of loop on input batches
+  //     return "";
+  //   }  // end of validate_overlap
 };
 
 }  // namespace portfft

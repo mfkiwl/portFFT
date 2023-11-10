@@ -145,21 +145,27 @@ PORTFFT_INLINE void dispatch_level(const Scalar* input, Scalar* output, const Sc
   for (IdxGlobal iter_value = 0; iter_value < outer_batch_product; iter_value++) {
     IdxGlobal outer_batch_offset = get_outer_batch_offset(factors, inner_batches, inclusive_scan, num_factors,
                                                           level_num, iter_value, outer_batch_product);
+    // TODO
+    IdxGlobal input_stride = 1;
+    IdxGlobal output_stride = 1;
+    IdxGlobal input_distance = 1;
+    IdxGlobal output_distance = 1;
     if (level == detail::level::WORKITEM) {
       workitem_impl<Dir, SubgroupSize, LayoutIn, LayoutOut, Scalar>(
           input + outer_batch_offset, output + outer_batch_offset, nullptr, nullptr, input_loc, batch_size,
-          scale_factor, global_data, kh, static_cast<const Scalar*>(nullptr), store_modifier_data,
-          static_cast<Scalar*>(nullptr), store_modifier_loc);
+          input_stride, output_stride, input_distance, output_distance, scale_factor, global_data, kh,
+          static_cast<const Scalar*>(nullptr), store_modifier_data, static_cast<Scalar*>(nullptr), store_modifier_loc);
     } else if (level == detail::level::SUBGROUP) {
       subgroup_impl<Dir, SubgroupSize, LayoutIn, LayoutOut, Scalar>(
           input + outer_batch_offset, output + outer_batch_offset, nullptr, nullptr, input_loc, twiddles_loc,
-          batch_size, implementation_twiddles, scale_factor, global_data, kh, static_cast<const Scalar*>(nullptr),
-          store_modifier_data, static_cast<Scalar*>(nullptr), store_modifier_loc);
+          batch_size, input_stride, output_stride, input_distance, output_distance, implementation_twiddles,
+          scale_factor, global_data, kh, static_cast<const Scalar*>(nullptr), store_modifier_data,
+          static_cast<Scalar*>(nullptr), store_modifier_loc);
     } else if (level == detail::level::WORKGROUP) {
       workgroup_impl<Dir, SubgroupSize, LayoutIn, LayoutOut, Scalar>(
           input + outer_batch_offset, output + outer_batch_offset, nullptr, nullptr, input_loc, twiddles_loc,
-          batch_size, implementation_twiddles, scale_factor, global_data, kh, static_cast<Scalar*>(nullptr),
-          store_modifier_data);
+          batch_size, input_stride, output_stride, input_distance, output_distance, implementation_twiddles,
+          scale_factor, global_data, kh, static_cast<Scalar*>(nullptr), store_modifier_data);
     }
     sycl::group_barrier(global_data.it.get_group());
   }

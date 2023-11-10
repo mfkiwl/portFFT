@@ -34,20 +34,41 @@
 #include <portfft/descriptor.hpp>
 #include <portfft/enums.hpp>
 
-/**
- * Runs Out of place transpose
- *
- * @tparam T Input Type
- * @param in input pointer
- * @param dft_len innermost dimension of the input
- * @param batches innermost dimension of the output
- */
-template <typename T>
-std::vector<T> transpose(const std::vector<T>& in, std::size_t dft_len, std::size_t batches) {
-  std::vector<T> out(in.size());
-  for (std::size_t j = 0; j < dft_len; j++) {
-    for (std::size_t i = 0; i < batches; i++) {
-      out.at(i + j * batches) = in.at(j + i * dft_len);
+template <typename T, typename Descriptor>
+std::vector<T> reshape_to_desc(const std::vector<T>& in, const Descriptor& desc, portfft::detail::layout layout,
+                               portfft::direction dir, float padding_value) {
+  const auto flat_len = desc.get_flattened_length();
+
+  // assume we are starting with the packed format of the descriptor
+  assert(in.size() == flat_len * desc.number_of_transforms);
+
+  // padding is added during initialization
+  std::vector<T> out(desc.get_input_count(dir), padding_value);
+
+  const auto offset = static_cast<std::ptrdiff_t>(desc.get_offset(dir));
+
+  if (layout == portfft::detail::layout::PACKED) {
+    std::copy(in.cbegin(), in.cend(), out.begin() + offset);
+  } else {
+    // only handling 1D for now
+    assert(desc.lengths.size() == 1);
+    const auto stride = desc.get_strides(dir).back();
+    const auto distance = desc.get_distance(dir);
+
+    // add strides and distances
+    T const* in_iter = in.data();
+    T* out_batch_iter = out.data() + offset;
+    for (std::size_t b = 0; b != desc.number_of_transforms; b += 1) {
+      T* out_transform_iter = out_batch_iter;
+
+      for (std::size_t e = 0; e != flat_len; e += 1) {
+        *out_transform_iter = *in_iter;
+
+        in_iter += 1;
+        out_transform_iter += stride;
+      }
+
+      out_batch_iter += distance;
     }
   }
   return out;
@@ -58,7 +79,6 @@ std::vector<T> transpose(const std::vector<T>& in, std::size_t dft_len, std::siz
  * @tparam Storage complex storage to use
  * @tparam Scalar type of the scalar used for computations
  * @tparam Domain domain of the FFT
- * @tparam PaddingT type of the padding value
  * @param desc The description of the FFT
  * @param padding_value The value to use in memory locations that are not expected to be read or written.
  * @param layout_in layout (PACKED/BATCH_INTERLEAVED) of the input data
@@ -68,13 +88,13 @@ std::vector<T> transpose(const std::vector<T>& in, std::size_t dft_len, std::siz
  *`Storage` is split, first two values contain input and output real part and the last two input and output imaginary
  *part of the data.
  **/
-template <portfft::direction Dir, portfft::complex_storage Storage, typename Scalar, portfft::domain Domain,
-          typename PaddingT>
+template <portfft::direction Dir, portfft::complex_storage Storage, typename Scalar, portfft::domain Domain>
 auto gen_fourier_data(portfft::descriptor<Scalar, Domain>& desc, portfft::detail::layout layout_in,
-                      portfft::detail::layout layout_out, PaddingT padding_value) {
+                      portfft::detail::layout layout_out, float padding_value) {
   constexpr bool IsRealDomain = Domain == portfft::domain::REAL;
   constexpr bool IsForward = Dir == portfft::direction::FORWARD;
   constexpr bool IsInterleaved = Storage == portfft::complex_storage::INTERLEAVED_COMPLEX;
+  constexpr bool debug_input = false;
 
   const auto batches = desc.number_of_transforms;
   const auto& dims = desc.lengths;
@@ -83,14 +103,17 @@ auto gen_fourier_data(portfft::descriptor<Scalar, Domain>& desc, portfft::detail
       "python3 -c \""
       "import numpy as np\n"
       "from sys import stdout\n"
-      "def gen_data(batch, dims, is_complex, is_double):\n"
+      "def gen_data(batch, dims, is_complex, is_double, debug_input):\n"
       "  scalar_type = np.double if is_double else np.single\n"
       "  complex_type = np.complex128 if is_double else np.complex64\n"
       "  dataGenDims = [batch] + dims\n"
-      "  rng = np.random.Generator(np.random.SFC64(0))\n"
-      "  inData = rng.uniform(-1, 1, dataGenDims).astype(scalar_type)\n"
-      "  if (is_complex):\n"
-      "    inData = inData + 1j * rng.uniform(-1, 1, dataGenDims).astype(scalar_type)\n"
+      "  if (debug_input):\n"
+      "    inData = np.arange(np.prod(dataGenDims)).reshape(dataGenDims).astype(scalar_type)\n"
+      "  else:\n"
+      "    rng = np.random.Generator(np.random.SFC64(0))\n"
+      "    inData = rng.uniform(-1, 1, dataGenDims).astype(scalar_type)\n"
+      "    if (is_complex):\n"
+      "      inData = inData + 1j * rng.uniform(-1, 1, dataGenDims).astype(scalar_type)\n"
       "  outData = np.fft.fftn(inData, axes=range(1, len(dims) + 1))\n"
       "  inData.reshape(-1, 1)\n"
       "  outData.reshape(-1, 1)\n"
@@ -115,6 +138,8 @@ auto gen_fourier_data(portfft::descriptor<Scalar, Domain>& desc, portfft::detail
   command << (IsRealDomain ? "False" : "True");
 
   command << "," << (std::is_same_v<Scalar, float> ? "False" : "True");
+
+  command << "," << (debug_input ? "True" : "False");
 
   command << ")\"";
 
@@ -149,22 +174,6 @@ auto gen_fourier_data(portfft::descriptor<Scalar, Domain>& desc, portfft::detail
     throw std::runtime_error("Reference data was not transferred correctly");
   }
 
-  // modify layout
-  if (layout_in == portfft::detail::layout::BATCH_INTERLEAVED) {
-    if constexpr (IsForward) {
-      forward = transpose(forward, elements / batches, desc.number_of_transforms);
-    } else {
-      backward = transpose(backward, backward_elements / batches, desc.number_of_transforms);
-    }
-  }
-  if (layout_out == portfft::detail::layout::BATCH_INTERLEAVED) {
-    if constexpr (IsForward) {
-      backward = transpose(backward, backward_elements / batches, desc.number_of_transforms);
-    } else {
-      forward = transpose(forward, elements / batches, desc.number_of_transforms);
-    }
-  }
-
   // Apply scaling factor to the output
   // Do this before adding offset to avoid scaling the offsets
   if (IsForward) {
@@ -177,18 +186,14 @@ auto gen_fourier_data(portfft::descriptor<Scalar, Domain>& desc, portfft::detail
     std::for_each(forward.begin(), forward.end(), [scaling_factor](auto& x) { x *= scaling_factor; });
   }
 
-  auto insert_offset = [=](auto inputVec, std::size_t offset) {
-    using InputT = decltype(inputVec);
-    std::ptrdiff_t fill_sz = static_cast<std::ptrdiff_t>(offset);
-    InputT outputVec(inputVec.size() + offset);
-    std::fill(outputVec.begin(), outputVec.begin() + fill_sz, static_cast<typename InputT::value_type>(padding_value));
-    std::copy(inputVec.cbegin(), inputVec.cend(), outputVec.begin() + fill_sz);
-    return outputVec;
-  };
+  const auto layout_fwd = IsForward ? layout_in : layout_out;
+  const auto layout_bwd = IsForward ? layout_out : layout_in;
 
-  forward = insert_offset(forward, desc.forward_offset);
-  backward = insert_offset(backward, desc.backward_offset);
+  // modify layout
+  forward = reshape_to_desc(forward, desc, layout_fwd, portfft::direction::FORWARD, padding_value);
+  backward = reshape_to_desc(backward, desc, layout_bwd, portfft::direction::BACKWARD, padding_value);
 
+  // TODO consider moving this into reshape_to_desc
   std::vector<Scalar> forward_real;
   std::vector<Scalar> backward_real;
   std::vector<Scalar> forward_imag;
@@ -256,16 +261,14 @@ void verify_dft(const portfft::descriptor<Scalar, Domain>& desc, std::vector<Ele
                   "Expected real data type for real backward / split complex dft verification.");
   }
 
-  auto data_shape = desc.lengths;
-
-  if constexpr (IsForward && Domain == portfft::domain::REAL) {
-    data_shape.back() = data_shape.back() / 2 + 1;
+  if (ref_output.size() != actual_output.size()) {
+    std::cerr << "expect the reference size (" << ref_output.size() << ") and the actual size (" << actual_output.size()
+              << ") to be the same." << std::endl;
+    throw std::runtime_error("Verification Failed");
   }
 
-  // TODO: Update this to take into account stride and distance.
-  std::size_t dft_len = std::accumulate(data_shape.cbegin(), data_shape.cend(), std::size_t(1), std::multiplies<>());
-
   auto dft_offset = IsForward ? desc.backward_offset : desc.forward_offset;
+
   for (std::size_t i = 0; i < dft_offset; ++i) {
     if (ref_output[i] != actual_output[i]) {
       if constexpr (!IsInterleaved) {
@@ -277,22 +280,17 @@ void verify_dft(const portfft::descriptor<Scalar, Domain>& desc, std::vector<Ele
     }
   }
 
-  for (std::size_t t = 0; t < desc.number_of_transforms; ++t) {
-    const ElemT* this_batch_ref = ref_output.data() + dft_len * t + dft_offset;
-    const ElemT* this_batch_computed = actual_output.data() + dft_len * t + dft_offset;
-
-    for (std::size_t e = 0; e != dft_len; ++e) {
-      const auto diff = std::abs(this_batch_computed[e] - this_batch_ref[e]);
-      if (diff > comparison_tolerance && diff / std::abs(this_batch_computed[e]) > comparison_tolerance) {
-        if constexpr (!IsInterleaved) {
-          std::cerr << elem_name << " part:";
-        }
-        // std::endl is used intentionally to flush the error message before google test exits the test.
-        std::cerr << "transform " << t << ", element " << e << ", with global idx " << t * dft_len + e
-                  << ", does not match\nref " << this_batch_ref[e] << " vs " << this_batch_computed[e] << "\ndiff "
-                  << diff << ", tolerance " << comparison_tolerance << std::endl;
-        throw std::runtime_error("Verification Failed");
+  for (std::size_t i = dft_offset; i < ref_output.size(); i += 1) {
+    const auto abs_diff = std::abs(ref_output[i] - actual_output[i]);
+    const auto rel_diff = abs_diff / std::abs(actual_output[i]);
+    if (abs_diff > comparison_tolerance && rel_diff > comparison_tolerance) {
+      if constexpr (!IsInterleaved) {
+        std::cerr << elem_name << " part:";
       }
+      // std::endl is used intentionally to flush the error message before google test exits the test.
+      std::cerr << "value at index " << i << " does not match\nref " << ref_output[i] << " vs " << actual_output[i]
+                << "\ndiff " << abs_diff << ", tolerance " << comparison_tolerance << std::endl;
+      throw std::runtime_error("Verification Failed");
     }
   }
 }

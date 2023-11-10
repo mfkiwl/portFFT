@@ -82,18 +82,7 @@ struct global_data_struct {
   }
 
   /**
-   * Implementation of log_message. End of recursion - logs the message, adds a newline and flushes the stream.
-   *
-   * @tparam T type of the object to log
-   * @param message message to log
-   */
-  template <typename T>
-  __attribute__((always_inline)) inline void log_message_impl(T message) {
-    s << message << "\n" << sycl::stream_manipulator::flush;
-  }
-
-  /**
-   * Implementation of log_message. End of recursion - logs the messages separated by newlines, adds a newline and
+   * Implementation of log_message. Logs the messages separated by spaces, adds a newline and
    * flushes the stream.
    *
    * @tparam TFirst type of the first object to log
@@ -103,8 +92,9 @@ struct global_data_struct {
    */
   template <typename TFirst, typename... Ts>
   __attribute__((always_inline)) inline void log_message_impl(TFirst message, Ts... other_messages) {
-    s << message << " ";
-    log_message_impl(other_messages...);
+    s << message;
+    ((s << ' ' << other_messages), ...);
+    s << '\n' << sycl::stream_manipulator::flush;
   }
 #endif
 
@@ -260,6 +250,15 @@ struct global_data_struct {
     // DEVICE is not supported because log_message_global uses PORTFFT_LOG_TRACE instead of PORTFFT_LOG_TRANSFERS.
   }
 };
+
+template <typename T, typename... Ts>
+void log_trace([[maybe_unused]] T message, [[maybe_unused]] Ts... messages) {
+#ifdef PORTFFT_LOG_TRACE
+  std::cout << "TRACE: " << message;
+  ((std::cout << ' ' << messages), ...);
+  std::cout << std::endl;
+#endif
+}
 
 };  // namespace portfft::detail
 

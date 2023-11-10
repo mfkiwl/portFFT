@@ -194,6 +194,38 @@ INSTANTIATE_TEST_SUITE_P(BwdScaledFFTTest, FFTTest,
                                                 ::testing::Values(1.0), scales)),
                          test_params_print());
 
+constexpr test_placement_layouts_params OOPUnpackedPacked{placement::OUT_OF_PLACE, detail::layout::UNPACKED,
+                                                          detail::layout::PACKED};
+constexpr test_placement_layouts_params OOPPackedUnpacked{placement::OUT_OF_PLACE, detail::layout::PACKED,
+                                                          detail::layout::UNPACKED};
+constexpr test_placement_layouts_params OOPUnpackedUnpacked{placement::OUT_OF_PLACE, detail::layout::UNPACKED,
+                                                            detail::layout::UNPACKED};
+constexpr test_placement_layouts_params IPUnpacked{placement::IN_PLACE, detail::layout::UNPACKED,
+                                                   detail::layout::UNPACKED};
+constexpr direction fwd = direction::FORWARD;
+constexpr complex_storage interleaved_complex = complex_storage::INTERLEAVED_COMPLEX;
+
+const std::vector<strides_param_tuple> work_item_strided_tests{
+    {OOPUnpackedPacked, fwd, interleaved_complex, 3, {8}, stride_params{{2}, {1}, 16, 8}},
+    {OOPUnpackedUnpacked, fwd, interleaved_complex, 33, {8}, stride_params{{33}, {99}, 1, 3}},
+    {OOPUnpackedUnpacked, fwd, interleaved_complex, 3, {8}, stride_params{{2}, {2}, 16, 16}},
+    {OOPUnpackedUnpacked, fwd, interleaved_complex, 3, {8}, stride_params{{2}, {3}, 16, 24}},
+    {OOPPackedUnpacked, fwd, interleaved_complex, 3, {8}, stride_params{{1}, {3}, 8, 24}},
+    {IPUnpacked, fwd, interleaved_complex, 3, {8}, stride_params{{2}, {2}, 16, 16}},
+    {IPUnpacked, fwd, interleaved_complex, 3, {12}, stride_params{{3}, {3}, 36, 36}},
+    {IPUnpacked, fwd, interleaved_complex, 1, {12}, stride_params{{1}, {1}, 1, 1}},
+    {IPUnpacked, fwd, interleaved_complex, 3, {12}, stride_params{{3}, {3}, 1, 1}},
+    {IPUnpacked, fwd, interleaved_complex, 33, {12}, stride_params{{33}, {33}, 1, 1}},
+    {IPUnpacked, fwd, interleaved_complex, 33, {12}, stride_params{{66}, {66}, 2, 2}},
+    {IPUnpacked, fwd, interleaved_complex, 4, {4}, stride_params{{4}, {4}, 3, 3}},  // bit of a wild
+                                                                                    // one
+};
+
+// Strided FFTs test suite
+INSTANTIATE_TEST_SUITE_P(FwdStridedFFTTest, FFTTest,
+                         ::testing::ConvertGenerator<strides_param_tuple>(::testing::ValuesIn(work_item_strided_tests)),
+                         test_params_print{});
+
 #define INSTANTIATE_TESTS_FULL(TYPE, MEMORY)                                                                        \
   TEST_P(FFTTest, TYPE##_##MEMORY##_C2C) {                                                                          \
     auto params = GetParam();                                                                                       \
