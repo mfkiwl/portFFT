@@ -282,8 +282,9 @@ struct committed_descriptor<Scalar, Domain>::run_kernel_struct<Dir, LayoutIn, La
                                                                TOut>::inner<detail::level::GLOBAL, Dummy> {
   static sycl::event execute(committed_descriptor& desc, const TIn& in, TOut& out, const TIn& in_imag, TOut& out_imag,
                              const std::vector<sycl::event>& dependencies, IdxGlobal n_transforms,
-                             IdxGlobal input_offset, IdxGlobal output_offset, Scalar scale_factor,
-                             dimension_struct& dimension_data) {
+                             IdxGlobal /*input_stride*/, IdxGlobal /*output_stride*/, IdxGlobal /*input_distance*/,
+                             IdxGlobal /*output_distance*/, IdxGlobal input_offset, IdxGlobal output_offset,
+                             Scalar scale_factor, dimension_struct& dimension_data) {
     (void)in_imag;
     (void)out_imag;
     const auto& kernels = dimension_data.kernels;

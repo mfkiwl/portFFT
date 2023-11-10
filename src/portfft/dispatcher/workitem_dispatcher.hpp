@@ -106,15 +106,18 @@ PORTFFT_INLINE void apply_modifier(Idx num_elements, PrivT priv, const T* modifi
  */
 template <direction Dir, Idx SubgroupSize, detail::layout LayoutIn, detail::layout LayoutOut, typename T>
 PORTFFT_INLINE void workitem_impl(const T* input, T* output, const T* input_imag, T* output_imag, T* loc,
-                                  IdxGlobal n_transforms, T scaling_factor, global_data_struct<1> global_data,
-                                  sycl::kernel_handler& kh, const T* load_modifier_data = nullptr,
-                                  const T* store_modifier_data = nullptr, T* loc_load_modifier = nullptr,
-                                  T* loc_store_modifier = nullptr) {
+                                  IdxGlobal n_transforms, IdxGlobal /*input_stride*/, IdxGlobal /*output_stride*/,
+                                  IdxGlobal /*input_distance*/, IdxGlobal /*output_distance*/, T scaling_factor,
+                                  global_data_struct<1> global_data, sycl::kernel_handler& kh,
+                                  const T* load_modifier_data = nullptr, const T* store_modifier_data = nullptr,
+                                  T* loc_load_modifier = nullptr, T* loc_store_modifier = nullptr) {
   complex_storage storage = kh.get_specialization_constant<detail::SpecConstComplexStorage>();
   detail::elementwise_multiply multiply_on_load = kh.get_specialization_constant<detail::SpecConstMultiplyOnLoad>();
   detail::elementwise_multiply multiply_on_store = kh.get_specialization_constant<detail::SpecConstMultiplyOnStore>();
   detail::apply_scale_factor apply_scale_factor = kh.get_specialization_constant<detail::SpecConstApplyScaleFactor>();
   const Idx fft_size = kh.get_specialization_constant<detail::SpecConstFftSize>();
+
+  // TODO actually account for strides
 
   global_data.log_message_global(__func__, "entered", "fft_size", fft_size, "n_transforms", n_transforms);
 
@@ -132,8 +135,6 @@ PORTFFT_INLINE void workitem_impl(const T* input, T* output, const T* input_imag
   T priv[2 * MaxComplexPerWI];
 #endif
   Idx subgroup_local_id = static_cast<Idx>(global_data.sg.get_local_linear_id());
-  IdxGlobal global_id = static_cast<IdxGlobal>(global_data.it.get_global_id(0));
-  IdxGlobal global_size = static_cast<IdxGlobal>(global_data.it.get_global_range(0));
   Idx subgroup_id = static_cast<Idx>(global_data.sg.get_group_id());
   Idx local_offset = n_reals * SubgroupSize * subgroup_id;
   Idx local_imag_offset = fft_size * SubgroupSize;
@@ -142,12 +143,16 @@ PORTFFT_INLINE void workitem_impl(const T* input, T* output, const T* input_imag
   auto loc_load_modifier_view = detail::padded_view(loc_load_modifier, BankLinesPerPad);
   auto loc_store_modifier_view = detail::padded_view(loc_store_modifier, BankLinesPerPad);
 
-  for (IdxGlobal i = global_id; i < round_up_to_multiple(n_transforms, static_cast<IdxGlobal>(SubgroupSize));
-       i += global_size) {
-    bool working = i < n_transforms;
-    Idx n_working = sycl::min(SubgroupSize, static_cast<Idx>(n_transforms - i) + subgroup_local_id);
+  const IdxGlobal transform_idx_begin = static_cast<IdxGlobal>(global_data.it.get_global_id(0));
+  const IdxGlobal transform_idx_step = static_cast<IdxGlobal>(global_data.it.get_global_range(0));
+  const IdxGlobal transform_idx_end = round_up_to_multiple(n_transforms, static_cast<IdxGlobal>(SubgroupSize));
+  for (IdxGlobal i = transform_idx_begin; i < transform_idx_end; i += transform_idx_step) {
+    const bool working = i < n_transforms;
+    IdxGlobal leader_i = (i - static_cast<IdxGlobal>(subgroup_local_id));
 
-    IdxGlobal global_offset = static_cast<IdxGlobal>(n_io_reals) * (i - static_cast<IdxGlobal>(subgroup_local_id));
+    Idx n_working = sycl::min(SubgroupSize, static_cast<Idx>(n_transforms - leader_i));
+    IdxGlobal global_offset = static_cast<IdxGlobal>(n_io_reals) * (leader_i);
+
     if (LayoutIn == detail::layout::PACKED) {
       if (storage == complex_storage::INTERLEAVED_COMPLEX) {
         global_data.log_message_global(__func__, "loading non-transposed data from global to local memory");
@@ -201,14 +206,17 @@ PORTFFT_INLINE void workitem_impl(const T* input, T* output, const T* input_imag
         }
       }
       global_data.log_dump_private("data loaded in registers:", priv, n_reals);
+
       if (multiply_on_load == detail::elementwise_multiply::APPLIED) {
         // Assumes load modifier data is stored in a transposed fashion (fft_size x  num_batches_local_mem)
         // to ensure much lesser bank conflicts
         global_data.log_message_global(__func__, "applying load modifier");
         detail::apply_modifier<Dir>(fft_size, priv, load_modifier_data, i * n_reals);
       }
+
       wi_dft<Dir, 0>(priv, priv, fft_size, 1, 1, wi_private_scratch);
       global_data.log_dump_private("data in registers after computation:", priv, n_reals);
+
       if (multiply_on_store == detail::elementwise_multiply::APPLIED) {
         // Assumes store modifier data is stored in a transposed fashion (fft_size x  num_batches_local_mem)
         // to ensure much lesser bank conflicts
@@ -223,6 +231,7 @@ PORTFFT_INLINE void workitem_impl(const T* input, T* output, const T* input_imag
         }
       }
       global_data.log_dump_private("data in registers after scaling:", priv, n_reals);
+
       global_data.log_message_global(__func__, "loading data from private to local memory");
       if (LayoutOut == detail::layout::PACKED) {
         if (storage == complex_storage::INTERLEAVED_COMPLEX) {
@@ -279,8 +288,9 @@ struct committed_descriptor<Scalar, Domain>::run_kernel_struct<Dir, LayoutIn, La
                                                                TOut>::inner<detail::level::WORKITEM, Dummy> {
   static sycl::event execute(committed_descriptor& desc, const TIn& in, TOut& out, const TIn& in_imag, TOut& out_imag,
                              const std::vector<sycl::event>& dependencies, IdxGlobal n_transforms,
-                             IdxGlobal input_offset, IdxGlobal output_offset, Scalar scale_factor,
-                             dimension_struct& dimension_data) {
+                             IdxGlobal input_offset, IdxGlobal output_offset, IdxGlobal input_stride,
+                             IdxGlobal output_stride, IdxGlobal input_distance, IdxGlobal output_distance,
+                             Scalar scale_factor, dimension_struct& dimension_data) {
     constexpr detail::memory Mem = std::is_pointer<TOut>::value ? detail::memory::USM : detail::memory::BUFFER;
     auto& kernel_data = dimension_data.kernels.at(0);
     std::size_t local_elements =
@@ -288,6 +298,15 @@ struct committed_descriptor<Scalar, Domain>::run_kernel_struct<Dir, LayoutIn, La
             desc, kernel_data.length, kernel_data.used_sg_size, kernel_data.factors, kernel_data.num_sgs_per_wg);
     std::size_t global_size = static_cast<std::size_t>(detail::get_global_size_workitem<Scalar>(
         n_transforms, SubgroupSize, kernel_data.num_sgs_per_wg, desc.n_compute_units));
+    detail::log_trace("Launching workitem kernel", "layout in", layout_to_string(LayoutIn), "layout out",
+                      layout_to_string(LayoutOut));
+    detail::log_trace('\t', "global_size", global_size);
+    detail::log_trace('\t', "n_transforms", n_transforms);
+    detail::log_trace('\t', "input_offset", input_offset, "input stride", input_stride, "input distance",
+                      input_distance);
+    detail::log_trace('\t', "output_offset", output_offset, "output stride", output_stride, "output distance",
+                      output_distance);
+    detail::log_trace('\t', "scale factor", scale_factor);
     return desc.queue.submit([&](sycl::handler& cgh) {
       cgh.depends_on(dependencies);
       cgh.use_kernel_bundle(kernel_data.exec_bundle);
@@ -311,7 +330,7 @@ struct committed_descriptor<Scalar, Domain>::run_kernel_struct<Dir, LayoutIn, La
             detail::workitem_impl<Dir, SubgroupSize, LayoutIn, LayoutOut>(
                 &in_acc_or_usm[0] + input_offset, &out_acc_or_usm[0] + output_offset,
                 &in_imag_acc_or_usm[0] + input_offset, &out_imag_acc_or_usm[0] + output_offset, &loc[0], n_transforms,
-                scale_factor, global_data, kh);
+                input_stride, output_stride, input_distance, output_distance, scale_factor, global_data, kh);
             global_data.log_message_global("Exiting workitem kernel");
           });
     });

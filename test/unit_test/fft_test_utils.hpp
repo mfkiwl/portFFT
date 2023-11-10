@@ -49,6 +49,12 @@ struct test_placement_layouts_params {
   detail::layout output_layout;
 };
 
+struct stride_params {
+  std::vector<std::size_t> forward_strides;
+  std::vector<std::size_t> backward_strides;
+  std::size_t forward_distance;
+  std::size_t backward_distance;
+};
 using basic_param_tuple = std::tuple<test_placement_layouts_params, direction, complex_storage,
                                      std::size_t /*batch_size*/, std::vector<std::size_t> /*lengths*/>;
 using offsets_param_tuple =
@@ -57,6 +63,8 @@ using offsets_param_tuple =
 using scales_param_tuple =
     std::tuple<test_placement_layouts_params, direction, complex_storage, std::size_t /*batch_size*/,
                std::vector<std::size_t> /*lengths*/, double /*forward_scale*/, double /*backward_scale*/>;
+using strides_param_tuple = std::tuple<test_placement_layouts_params, direction, complex_storage,
+                                       std::size_t /*batch_size*/, std::vector<std::size_t> /*lengths*/, stride_params>;
 // More tuples can be added here to easily instantiate tests that will require different parameters
 
 struct test_params {
@@ -71,6 +79,7 @@ struct test_params {
   std::optional<double> backward_scale;
   std::optional<std::size_t> forward_offset;
   std::optional<std::size_t> backward_offset;
+  std::optional<stride_params> strides;
 
   test_params() = default;
 
@@ -94,6 +103,9 @@ struct test_params {
     forward_scale = std::get<5>(params);
     backward_scale = std::get<6>(params);
   }
+  explicit test_params(strides_param_tuple params) : test_params(get_sub_tuple<basic_param_tuple>(params)) {
+    strides = std::get<5>(params);
+  }
 };
 
 /// Structure used by GTest to generate the test name
@@ -101,19 +113,6 @@ struct test_params_print {
   std::string operator()(const testing::TestParamInfo<test_params>& info) const {
     auto params = info.param;
     std::stringstream ss;
-    auto print_layout = [&ss](detail::layout layout) {
-      if (layout == detail::layout::PACKED) {
-        ss << "PACKED";
-      } else if (layout == detail::layout::BATCH_INTERLEAVED) {
-        ss << "BATCH_INTERLEAVED";
-      }
-    };
-    auto print_double = [&](double d) {
-      std::string fp_str = std::to_string(d);
-      std::replace(fp_str.begin(), fp_str.end(), '-', 'm');
-      std::replace(fp_str.begin(), fp_str.end(), '.', '_');
-      ss << fp_str;
-    };
 
     ss << "Placement_";
     if (params.placement == placement::IN_PLACE) {
@@ -121,17 +120,38 @@ struct test_params_print {
     } else if (params.placement == placement::OUT_OF_PLACE) {
       ss << "OOP";
     }
-    ss << "__LayoutIn_";
-    print_layout(params.input_layout);
-    ss << "__LayoutOut_";
-    print_layout(params.output_layout);
+
+    ss << "__LayoutIn_" << layout_to_string(params.input_layout);
+    ss << "__LayoutOut_" << layout_to_string(params.output_layout);
+
+    if (params.strides) {
+      ss << "__FwdStrides";
+      for (std::size_t s : params.strides.value().forward_strides) {
+        ss << "_" << s;
+      }
+      ss << "__FwdDistance_" << params.strides.value().forward_distance;
+      ss << "__BwdStrides";
+      for (std::size_t s : params.strides.value().backward_strides) {
+        ss << "_" << s;
+      }
+      ss << "__BwdDistance_" << params.strides.value().backward_distance;
+    }
+
     ss << "__Direction_" << (params.dir == direction::FORWARD ? "Fwd" : "Bwd");
     ss << "__Storage_" << (params.storage == complex_storage::INTERLEAVED_COMPLEX ? "Interleaved" : "Split");
     ss << "__Batch_" << params.batch;
+
     ss << "__Lengths";
     for (std::size_t length : params.lengths) {
       ss << "_" << length;
     }
+
+    auto print_double = [&](double d) {
+      std::string fp_str = std::to_string(d);
+      std::replace(fp_str.begin(), fp_str.end(), '-', 'm');
+      std::replace(fp_str.begin(), fp_str.end(), '.', '_');
+      ss << fp_str;
+    };
     if (params.forward_scale) {
       ss << "__FwdScale_";
       print_double(*params.forward_scale);
@@ -140,12 +160,14 @@ struct test_params_print {
       ss << "__BwdScale_";
       print_double(*params.backward_scale);
     }
+
     if (params.forward_offset) {
       ss << "__FwdOffset_" << *params.forward_offset;
     }
     if (params.backward_offset) {
       ss << "__BwdOffset_" << *params.backward_offset;
     }
+
     return ss.str();
   }
 };
@@ -173,17 +195,10 @@ auto get_descriptor(const test_params& params) {
   desc.complex_storage = params.storage;
 
   auto apply_layout_for_dir = [&desc, &params](detail::layout layout, direction dir) {
-    if (layout == detail::layout::PACKED) {
-      // Keep default strides and set default distance for the PACKED layout if needed
-      if (desc.number_of_transforms > 1) {
-        desc.get_distance(dir) = desc.get_flattened_length();
-      }
-    } else if (layout == detail::layout::BATCH_INTERLEAVED) {
+    if (layout == detail::layout::BATCH_INTERLEAVED) {
       // Set default strides and distance for the batch interleaved layout
       desc.get_strides(dir) = {static_cast<std::size_t>(params.batch)};
       desc.get_distance(dir) = 1;
-    } else {
-      throw std::runtime_error("Unsupported layout");
     }
   };
   // First set input strides and distance if needed then output ones
@@ -201,6 +216,13 @@ auto get_descriptor(const test_params& params) {
   }
   if (params.backward_offset) {
     desc.backward_offset = *params.backward_offset;
+  }
+  if (params.strides) {
+    auto& strides = params.strides.value();
+    desc.forward_strides = strides.forward_strides;
+    desc.forward_distance = strides.forward_distance;
+    desc.backward_strides = strides.backward_strides;
+    desc.backward_distance = strides.backward_distance;
   }
   return desc;
 }
