@@ -75,7 +75,7 @@ constexpr const char* layout_to_string(layout l) {
     case layout::PACKED:
       return "PACKED";
     case layout::UNPACKED:
-      return "SUBGROUP";
+      return "UNPACKED";
     case layout::BATCH_INTERLEAVED:
       return "BATCH_INTERLEAVED";
   }

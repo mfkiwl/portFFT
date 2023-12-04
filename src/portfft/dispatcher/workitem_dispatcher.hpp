@@ -175,7 +175,21 @@ PORTFFT_INLINE void workitem_impl(const T* input, T* output, const T* input_imag
     sycl::group_barrier(global_data.sg);
 
     if (working) {
-      if (LayoutIn == detail::layout::BATCH_INTERLEAVED) {
+      if (LayoutIn == detail::layout::PACKED) {
+        global_data.log_message_global(__func__, "loading non-transposed data from local to private memory");
+        if (storage == complex_storage::INTERLEAVED_COMPLEX) {
+          detail::offset_view offset_local_view{loc_view, local_offset + subgroup_local_id * n_reals};
+          copy_wi(global_data, offset_local_view, priv, n_reals);
+        } else {
+          detail::offset_view local_real_view{loc_view, local_offset + subgroup_local_id * fft_size};
+          detail::offset_view local_imag_view{loc_view,
+                                              local_offset + subgroup_local_id * fft_size + local_imag_offset};
+          detail::strided_view priv_real_view{priv, 2};
+          detail::strided_view priv_imag_view{priv, 2, 1};
+          copy_wi(global_data, local_real_view, priv_real_view, fft_size);
+          copy_wi(global_data, local_imag_view, priv_imag_view, fft_size);
+        }
+      } else {
         global_data.log_message_global(__func__, "loading transposed data from global to private memory");
         // Load directly into registers from global memory as all loads will be fully coalesced.
         // No need of going through local memory either as it is an unnecessary extra write step.
@@ -189,20 +203,6 @@ PORTFFT_INLINE void workitem_impl(const T* input, T* output, const T* input_imag
           detail::strided_view priv_imag_view{priv, 2, 1};
           copy_wi(global_data, input_real_view, priv_real_view, fft_size);
           copy_wi(global_data, input_imag_view, priv_imag_view, fft_size);
-        }
-      } else {
-        global_data.log_message_global(__func__, "loading non-transposed data from local to private memory");
-        if (storage == complex_storage::INTERLEAVED_COMPLEX) {
-          detail::offset_view offset_local_view{loc_view, local_offset + subgroup_local_id * n_reals};
-          copy_wi(global_data, offset_local_view, priv, n_reals);
-        } else {
-          detail::offset_view local_real_view{loc_view, local_offset + subgroup_local_id * fft_size};
-          detail::offset_view local_imag_view{loc_view,
-                                              local_offset + subgroup_local_id * fft_size + local_imag_offset};
-          detail::strided_view priv_real_view{priv, 2};
-          detail::strided_view priv_imag_view{priv, 2, 1};
-          copy_wi(global_data, local_real_view, priv_real_view, fft_size);
-          copy_wi(global_data, local_imag_view, priv_imag_view, fft_size);
         }
       }
       global_data.log_dump_private("data loaded in registers:", priv, n_reals);
