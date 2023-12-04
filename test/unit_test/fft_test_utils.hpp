@@ -412,6 +412,16 @@ std::enable_if_t<TestMemory == test_memory::buffer> check_fft(
   }
 }
 
+template <typename T>
+T padding_representation(float p) {
+  if constexpr (std::is_floating_point_v<T>) {
+    return p;
+  } else {
+    static_assert(std::is_same_v<T, std::complex<float>>);
+    return {p, p};
+  }
+}
+
 /**
  * Common function to run tests.
  * Initializes tests and run them for USM or buffer.
@@ -444,7 +454,9 @@ void run_test(const test_params& params) {
   float padding_value = -5.f;  // Value for memory that isn't written to.
   auto [host_input, host_reference_output, host_input_imag, host_reference_output_imag] =
       gen_fourier_data<Dir, Storage>(desc, params.input_layout, params.output_layout, padding_value);
-  decltype(host_reference_output) host_output(desc.get_output_count(params.dir), padding_value);
+  decltype(host_reference_output) host_output(
+      desc.get_output_count(params.dir),
+      padding_representation<typename decltype(host_reference_output)::value_type>(padding_value));
   decltype(host_reference_output_imag) host_output_imag(
       Storage == complex_storage::SPLIT_COMPLEX ? desc.get_output_count(params.dir) : 0, padding_value);
   double tolerance = 1e-3;

@@ -197,9 +197,8 @@ PORTFFT_INLINE void workitem_impl(const T* input, T* output, const T* input_imag
           detail::strided_view input_view{input, input_stride, input_distance * i * 2};
           copy_wi<2>(global_data, input_view, priv, fft_size);
         } else {
-          // TODO(finlay) strided
-          detail::strided_view input_real_view{input, n_transforms, i};
-          detail::strided_view input_imag_view{input_imag, n_transforms, i};
+          detail::strided_view input_real_view{input, input_stride, input_distance * i};
+          detail::strided_view input_imag_view{input_imag, input_stride, input_distance * i};
           detail::strided_view priv_real_view{priv, 2};
           detail::strided_view priv_imag_view{priv, 2, 1};
           copy_wi(global_data, input_real_view, priv_real_view, fft_size);
@@ -252,11 +251,10 @@ PORTFFT_INLINE void workitem_impl(const T* input, T* output, const T* input_imag
           detail::strided_view output_view{output, output_stride, output_distance * i * 2};
           copy_wi<2>(global_data, priv, output_view, fft_size);
         } else {
-          // TODO(finlay) strided
           detail::strided_view priv_real_view{priv, 2};
           detail::strided_view priv_imag_view{priv, 2, 1};
-          detail::strided_view output_real_view{output, n_transforms, i};
-          detail::strided_view output_imag_view{output_imag, n_transforms, i};
+          detail::strided_view output_real_view{output, output_stride, output_distance * i};
+          detail::strided_view output_imag_view{output_imag, output_stride, output_distance * i};
           copy_wi(global_data, priv_real_view, output_real_view, fft_size);
           copy_wi(global_data, priv_imag_view, output_imag_view, fft_size);
         }
