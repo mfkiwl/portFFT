@@ -204,6 +204,7 @@ constexpr test_placement_layouts_params IPUnpacked{placement::IN_PLACE, detail::
                                                    detail::layout::UNPACKED};
 constexpr direction fwd = direction::FORWARD;
 constexpr complex_storage interleaved_complex = complex_storage::INTERLEAVED_COMPLEX;
+constexpr complex_storage split_complex = complex_storage::SPLIT_COMPLEX;
 
 const std::vector<strides_param_tuple> work_item_strided_tests{
     {OOPUnpackedPacked, fwd, interleaved_complex, 3, {8}, stride_params{{2}, {1}, 16, 8}},
@@ -219,6 +220,10 @@ const std::vector<strides_param_tuple> work_item_strided_tests{
     {IPUnpacked, fwd, interleaved_complex, 33, {12}, stride_params{{66}, {66}, 2, 2}},
     {IPUnpacked, fwd, interleaved_complex, 4, {4}, stride_params{{4}, {4}, 3, 3}},  // bit of a wild
                                                                                     // one
+
+    // split complex tests
+    {OOPUnpackedUnpacked, fwd, split_complex, 3, {8}, stride_params{{2}, {3}, 16, 24}},
+    {IPUnpacked, fwd, split_complex, 3, {12}, stride_params{{3}, {3}, 36, 36}},
 };
 
 // Strided FFTs test suite

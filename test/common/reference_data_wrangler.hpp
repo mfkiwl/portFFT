@@ -43,7 +43,7 @@ std::vector<T> reshape_to_desc(const std::vector<T>& in, const Descriptor& desc,
   assert(in.size() == flat_len * desc.number_of_transforms);
 
   // padding is added during initialization
-  std::vector<T> out(desc.get_input_count(dir), padding_value);
+  std::vector<T> out(desc.get_input_count(dir), T{padding_value, padding_value});
 
   const auto offset = static_cast<std::ptrdiff_t>(desc.get_offset(dir));
 
