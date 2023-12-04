@@ -106,8 +106,8 @@ PORTFFT_INLINE void apply_modifier(Idx num_elements, PrivT priv, const T* modifi
  */
 template <direction Dir, Idx SubgroupSize, detail::layout LayoutIn, detail::layout LayoutOut, typename T>
 PORTFFT_INLINE void workitem_impl(const T* input, T* output, const T* input_imag, T* output_imag, T* loc,
-                                  IdxGlobal n_transforms, IdxGlobal /*input_stride*/, IdxGlobal /*output_stride*/,
-                                  IdxGlobal /*input_distance*/, IdxGlobal /*output_distance*/, T scaling_factor,
+                                  IdxGlobal n_transforms, IdxGlobal input_stride, IdxGlobal output_stride,
+                                  IdxGlobal input_distance, IdxGlobal output_distance, T scaling_factor,
                                   global_data_struct<1> global_data, sycl::kernel_handler& kh,
                                   const T* load_modifier_data = nullptr, const T* store_modifier_data = nullptr,
                                   T* loc_load_modifier = nullptr, T* loc_store_modifier = nullptr) {
@@ -194,9 +194,10 @@ PORTFFT_INLINE void workitem_impl(const T* input, T* output, const T* input_imag
         // Load directly into registers from global memory as all loads will be fully coalesced.
         // No need of going through local memory either as it is an unnecessary extra write step.
         if (storage == complex_storage::INTERLEAVED_COMPLEX) {
-          detail::strided_view input_view{input, n_transforms, i * 2};
+          detail::strided_view input_view{input, input_stride, input_distance * i * 2};
           copy_wi<2>(global_data, input_view, priv, fft_size);
         } else {
+          // TODO(finlay) strided
           detail::strided_view input_real_view{input, n_transforms, i};
           detail::strided_view input_imag_view{input_imag, n_transforms, i};
           detail::strided_view priv_real_view{priv, 2};
@@ -248,9 +249,10 @@ PORTFFT_INLINE void workitem_impl(const T* input, T* output, const T* input_imag
         }
       } else {
         if (storage == complex_storage::INTERLEAVED_COMPLEX) {
-          detail::strided_view output_view{output, n_transforms, i * 2};
+          detail::strided_view output_view{output, output_stride, output_distance * i * 2};
           copy_wi<2>(global_data, priv, output_view, fft_size);
         } else {
+          // TODO(finlay) strided
           detail::strided_view priv_real_view{priv, 2};
           detail::strided_view priv_imag_view{priv, 2, 1};
           detail::strided_view output_real_view{output, n_transforms, i};
