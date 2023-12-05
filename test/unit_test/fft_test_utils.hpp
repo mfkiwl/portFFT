@@ -417,7 +417,7 @@ T padding_representation(float p) {
   if constexpr (std::is_floating_point_v<T>) {
     return p;
   } else {
-    static_assert(std::is_same_v<T, std::complex<float>>);
+    static_assert(std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>>);
     return {p, p};
   }
 }
