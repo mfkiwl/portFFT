@@ -222,8 +222,8 @@ const std::vector<strides_param_tuple> work_item_strided_tests{
                                                                                     // one
 
     // split complex tests
-    {OOPUnpackedUnpacked, fwd, split_complex, 3, {8}, stride_params{{2}, {3}, 16, 24}},
-    {IPUnpacked, fwd, split_complex, 3, {12}, stride_params{{3}, {3}, 36, 36}},
+    {OOPUnpackedUnpacked, fwd, split_complex, 33, {8}, stride_params{{2}, {3}, 16, 24}},
+    {IPUnpacked, fwd, split_complex, 33, {12}, stride_params{{3}, {3}, 36, 36}},
 };
 
 // Strided FFTs test suite
