@@ -224,6 +224,21 @@ const std::vector<strides_param_tuple> work_item_strided_tests{
     // split complex tests
     {OOPUnpackedUnpacked, fwd, split_complex, 33, {8}, stride_params{{2}, {3}, 16, 24}},
     {IPUnpacked, fwd, split_complex, 33, {12}, stride_params{{3}, {3}, 36, 36}},
+
+    {OOPUnpackedPacked, fwd, interleaved_complex, 3, {64}, stride_params{{2}, {1}, 128, 64}},
+    {OOPUnpackedUnpacked, fwd, interleaved_complex, 33, {64}, stride_params{{33}, {99}, 1, 3}},
+    {OOPUnpackedUnpacked, fwd, interleaved_complex, 3, {64}, stride_params{{2}, {2}, 128, 128}},
+    {OOPUnpackedUnpacked, fwd, interleaved_complex, 3, {128}, stride_params{{2}, {3}, 256, 384}},
+    {OOPPackedUnpacked, fwd, interleaved_complex, 3, {64}, stride_params{{1}, {3}, 64, 192}},
+    {IPUnpacked, fwd, interleaved_complex, 3, {64}, stride_params{{2}, {2}, 128, 128}},
+    {IPUnpacked, fwd, interleaved_complex, 3, {128}, stride_params{{3}, {3}, 384, 384}},
+    {IPUnpacked, fwd, interleaved_complex, 1, {128}, stride_params{{1}, {1}, 1, 1}},
+    {IPUnpacked, fwd, interleaved_complex, 3, {128}, stride_params{{3}, {3}, 1, 1}},
+    {IPUnpacked, fwd, interleaved_complex, 33, {128}, stride_params{{33}, {33}, 1, 1}},
+    {IPUnpacked, fwd, interleaved_complex, 33, {128}, stride_params{{66}, {66}, 2, 2}},
+
+    {OOPUnpackedUnpacked, fwd, split_complex, 33, {64}, stride_params{{2}, {3}, 128, 192}},
+    {IPUnpacked, fwd, split_complex, 33, {128}, stride_params{{3}, {3}, 384, 384}},
 };
 
 // Strided FFTs test suite
