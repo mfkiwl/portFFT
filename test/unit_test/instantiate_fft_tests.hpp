@@ -221,6 +221,7 @@ const std::vector<strides_param_tuple> work_item_strided_tests{
     {IPUnpacked, fwd, interleaved_complex, 4, {4}, stride_params{{4}, {4}, 3, 3}},  // bit of a wild
                                                                                     // one
 
+    {OOPUnpackedUnpacked, fwd, interleaved_complex, 3, {8}, stride_params{{2}, {2}, 20, 20}},
     // split complex tests
     {OOPUnpackedUnpacked, fwd, split_complex, 33, {8}, stride_params{{2}, {3}, 16, 24}},
     {IPUnpacked, fwd, split_complex, 33, {12}, stride_params{{3}, {3}, 36, 36}},
