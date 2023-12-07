@@ -140,16 +140,16 @@ PORTFFT_INLINE void dispatch_level(const Scalar* input, Scalar* output, const Sc
   auto level = kh.get_specialization_constant<GlobalSubImplSpecConst>();
   Idx level_num = kh.get_specialization_constant<GlobalSpecConstLevelNum>();
   Idx num_factors = kh.get_specialization_constant<GlobalSpecConstNumFactors>();
+  const Idx fft_size = kh.get_specialization_constant<detail::SpecConstFftSize>();
   global_data.log_message_global(__func__, "dispatching sub implementation for factor num = ", level_num);
   IdxGlobal outer_batch_product = get_outer_batch_product(inclusive_scan, num_factors, level_num);
   for (IdxGlobal iter_value = 0; iter_value < outer_batch_product; iter_value++) {
     IdxGlobal outer_batch_offset = get_outer_batch_offset(factors, inner_batches, inclusive_scan, num_factors,
                                                           level_num, iter_value, outer_batch_product);
-    // TODO
-    IdxGlobal input_stride = 1;
-    IdxGlobal output_stride = 1;
-    IdxGlobal input_distance = 1;
-    IdxGlobal output_distance = 1;
+    const IdxGlobal input_stride = LayoutIn == detail::layout::PACKED ? 1 : batch_size;
+    const IdxGlobal output_stride = LayoutOut == detail::layout::PACKED ? 1 : batch_size;
+    const IdxGlobal input_distance = LayoutIn == detail::layout::PACKED ? fft_size : 1;
+    const IdxGlobal output_distance = LayoutOut == detail::layout::PACKED ? fft_size : 1;
     if (level == detail::level::WORKITEM) {
       workitem_impl<Dir, SubgroupSize, LayoutIn, LayoutOut, Scalar>(
           input + outer_batch_offset, output + outer_batch_offset, nullptr, nullptr, input_loc, batch_size,
