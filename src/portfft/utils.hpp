@@ -24,9 +24,11 @@
 #include <sycl/sycl.hpp>
 
 #include <limits>
+#include <type_traits>
 #include <vector>
 
 #include "defines.hpp"
+
 #include "enums.hpp"
 
 namespace portfft {
@@ -87,36 +89,7 @@ constexpr bool can_cast_safely(const InputType& x) {
     return true;
   }
   OutputType x_converted = static_cast<OutputType>(x);
-  return (static_cast<InputType>(x_converted) == x);
-}
-
-/**
- * Function which handles factorizing a size till it can be dispatched to one of the existing implementations
- * @tparam F Decltype of function being passed
- * @param factor_size Length of the factor
- * @param check_and_select_target_level Function which checks whether the factor can fit in one of the existing
- * implementations
- * The function should accept factor size and whether it would be have a BATCH_INTERLEAVED layout or not as an input,
- * and should return a boolean indicating whether or not the factor size can fit in any of the implementation.
- * @param transposed whether or not the factor will be computed in a BATCH_INTERLEAVED format
- * @return
- */
-template <typename F>
-IdxGlobal factorize_input_impl(IdxGlobal factor_size, F&& check_and_select_target_level, bool transposed) {
-  IdxGlobal fact_1 = factor_size;
-  if (check_and_select_target_level(fact_1, transposed)) {
-    return fact_1;
-  }
-  if ((detail::factorize(fact_1) == 1)) {
-    throw unsupported_configuration("Large prime sized factors are not supported at the moment");
-  }
-  do {
-    fact_1 = detail::factorize(fact_1);
-    if (fact_1 == 1) {
-      throw internal_error("Factorization Failed !");
-    }
-  } while (!check_and_select_target_level(fact_1));
-  return fact_1;
+  return static_cast<InputType>(x_converted) == x;
 }
 
 /**
@@ -129,14 +102,29 @@ IdxGlobal factorize_input_impl(IdxGlobal factor_size, F&& check_and_select_targe
  * implementation.
  */
 template <typename F>
-void factorize_input(IdxGlobal input_size, F&& check_and_select_target_level) {
-  if (detail::factorize(input_size) == 1) {
-    throw unsupported_configuration("Large Prime sized FFTs are currently not supported");
+std::vector<typename std::invoke_result_t<F, IdxGlobal, bool>::value_type> factorize_input(
+    IdxGlobal input_size, F&& check_and_select_target_level) {
+  std::vector<typename std::invoke_result_t<F, IdxGlobal, bool>::value_type> subtransforms;
+  IdxGlobal factor_prod = 1;
+  while (input_size / factor_prod != 1) {
+    auto potential_factor = input_size / factor_prod;
+
+    // repeatedly try to factorize until a size is accepted or factorization fails
+    while (true) {
+      if (auto subimpl = check_and_select_target_level(potential_factor, true); subimpl) {
+        subtransforms.push_back(subimpl.value());
+        break;
+      }
+      potential_factor = detail::factorize(potential_factor);
+      if (potential_factor == 1) {
+        throw unsupported_configuration("Large Prime sized FFTs are currently not supported");
+      }
+    }
+
+    factor_prod *= potential_factor;
   }
-  IdxGlobal temp = 1;
-  while (input_size / temp != 1) {
-    temp *= factorize_input_impl(input_size / temp, check_and_select_target_level, true);
-  }
+  assert(input_size == factor_prod);
+  return subtransforms;
 }
 
 /**

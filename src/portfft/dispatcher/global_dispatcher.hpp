@@ -254,7 +254,8 @@ struct committed_descriptor<Scalar, Domain>::set_spec_constants_struct::inner<de
     in_bundle.template set_specialization_constant<detail::GlobalSubImplSpecConst>(level);
     in_bundle.template set_specialization_constant<detail::GlobalSpecConstNumFactors>(num_factors);
     in_bundle.template set_specialization_constant<detail::GlobalSpecConstLevelNum>(factor_num);
-    if (level == detail::level::WORKITEM || level == detail::level::WORKGROUP) {
+    assert(level != detail::level::WORKGROUP);  // we don't support workgroup as a sublevel of GLOBAL
+    if (level == detail::level::WORKITEM) {
       in_bundle.template set_specialization_constant<detail::SpecConstFftSize>(length_idx);
     } else if (level == detail::level::SUBGROUP) {
       in_bundle.template set_specialization_constant<detail::SubgroupFactorWISpecConst>(factors[1]);
