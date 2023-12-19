@@ -205,11 +205,12 @@ class committed_descriptor {
   std::shared_ptr<Scalar> scratch_ptr_2;
   std::size_t scratch_space_required;
 
+  // this is the information for the sub-transforms. If the transform top-level is "GLOBAL" then there will be multiple of these for that dim, otherwise just 1.
   struct kernel_data_struct {
     sycl::kernel_bundle<sycl::bundle_state::executable> exec_bundle;
-    std::vector<Idx> factors;
-    std::size_t length;
-    Idx used_sg_size;
+    std::vector<Idx> factors; // factors for the kernel if its a subgroup or workgroup kernel
+    std::size_t length; // overall length of the sub-transforms.
+    Idx used_sg_size; // The subgroup size the kernel bundle compiled for. I think this is constant across the struct.
     Idx num_sgs_per_wg;
     std::shared_ptr<Scalar> twiddles_forward;
     detail::level level;
@@ -230,14 +231,15 @@ class committed_descriptor {
           level(level) {}
   };
 
+  // this is a top level transform for one dimension
   struct dimension_struct {
     std::vector<kernel_data_struct> kernels;
-    std::shared_ptr<IdxGlobal> factors_and_scan;
-    detail::level level;
-    std::size_t length;
-    Idx used_sg_size;
-    Idx num_batches_in_l2;
-    Idx num_factors;
+    std::shared_ptr<IdxGlobal> factors_and_scan; // device pointer to factors, batch_sizes, and scan of factors
+    detail::level level; // what sort of transform is this at the top level (GLOBAL will have multiple kernels)
+    std::size_t length; // length of this dim
+    Idx used_sg_size; // The subgroup size of all the kernels
+    Idx num_batches_in_l2; // the number of batches we can have running at once without conflict of some kind
+    Idx num_factors; // number of factors used for this dimensions
 
     dimension_struct(std::vector<kernel_data_struct> kernels, detail::level level, std::size_t length, Idx used_sg_size)
         : kernels(kernels), level(level), length(length), used_sg_size(used_sg_size) {}
@@ -516,15 +518,18 @@ class committed_descriptor {
    */
   template <Idx SubgroupSize, Idx... OtherSGSizes>
   dimension_struct build_w_spec_const(std::size_t kernel_num) {
+
     if (std::count(supported_sg_sizes.begin(), supported_sg_sizes.end(), SubgroupSize)) {
       auto [top_level, prepared_vec] = prepare_implementation<SubgroupSize>(kernel_num);
       bool is_compatible = true;
+
       for (auto [level, ids, factors] : prepared_vec) {
         is_compatible = is_compatible && sycl::is_compatible(ids, dev);
         if (!is_compatible) {
           break;
         }
       }
+
       std::vector<kernel_data_struct> result;
       if (is_compatible) {
         std::size_t counter = 0;
@@ -536,6 +541,7 @@ class committed_descriptor {
                                                                             : detail::elementwise_multiply::APPLIED;
           const auto apply_scale_factor = counter == prepared_vec.size() - 1 ? detail::apply_scale_factor::APPLIED
                                                                              : detail::apply_scale_factor::NOT_APPLIED;
+	  // TODO: multiply on load is never used, remove it.
           set_spec_constants(top_level, in_bundle, len, factors, detail::elementwise_multiply::NOT_APPLIED,
                              multiply_on_store, apply_scale_factor, level, static_cast<Idx>(counter),
                              static_cast<Idx>(prepared_vec.size()));
@@ -555,6 +561,7 @@ class committed_descriptor {
         }
       }
     }
+
     if constexpr (sizeof...(OtherSGSizes) == 0) {
       throw invalid_configuration("None of the compiled subgroup sizes are supported by the device");
     } else {

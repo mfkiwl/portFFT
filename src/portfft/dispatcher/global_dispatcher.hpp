@@ -58,9 +58,7 @@ inline std::pair<IdxGlobal, IdxGlobal> get_launch_params(IdxGlobal fft_size, Idx
     IdxGlobal n_wgs_required = divide_ceil(num_batches, n_ffts_per_wg);
     return std::make_pair(std::min(n_wgs_required * wg_size, n_available_sgs), wg_size);
   }
-  if (level == detail::level::WORKGROUP) {
-    return std::make_pair(std::min(num_batches * wg_size, n_available_sgs), wg_size);
-  }
+  assert(level != detail::level::WORKGROUP);
   throw internal_error("illegal level encountered");
 }
 
@@ -92,11 +90,7 @@ inline IdxGlobal increment_twiddle_offset(detail::level level, Idx factor_size) 
   if (level == detail::level::SUBGROUP) {
     return 2 * factor_size;
   }
-  if (level == detail::level::WORKGROUP) {
-    Idx n = detail::factorize(factor_size);
-    Idx m = factor_size / n;
-    return 2 * (factor_size + m + n);
-  }
+  assert(level != detail::level::WORKGROUP);
   return 0;
 }
 
@@ -106,13 +100,20 @@ template <typename Scalar, domain Domain>
 template <typename Dummy>
 struct committed_descriptor<Scalar, Domain>::calculate_twiddles_struct::inner<detail::level::GLOBAL, Dummy> {
   static Scalar* execute(committed_descriptor& desc, dimension_struct& dimension_data) {
+    std::cout << "---- START calculate_twiddles_struct FOR GLOBAL ----\n";
     auto& kernels = dimension_data.kernels;
     std::vector<IdxGlobal> factors_idx_global;
     // Get factor sizes per level;
     for (const auto& kernel_data : kernels) {
-      factors_idx_global.push_back(static_cast<IdxGlobal>(
-          std::accumulate(kernel_data.factors.begin(), kernel_data.factors.end(), 1, std::multiplies<Idx>())));
+      factors_idx_global.push_back(std::accumulate(kernel_data.factors.begin(), kernel_data.factors.end(), IdxGlobal{1},
+                                                   std::multiplies<IdxGlobal>()));
     }
+
+    std::cout << "factors_idx_global: ";
+    for (auto f : factors_idx_global) {
+      std::cout << f << " ";
+    }
+    std::cout << '\n';
 
     std::vector<IdxGlobal> sub_batches;
     // Get sub batches
@@ -121,24 +122,32 @@ struct committed_descriptor<Scalar, Domain>::calculate_twiddles_struct::inner<de
                                             factors_idx_global.end(), IdxGlobal(1), std::multiplies<IdxGlobal>()));
     }
     sub_batches.push_back(factors_idx_global.at(factors_idx_global.size() - 2));
+
+    std::cout << "sub_batches: ";
+    for (auto f : sub_batches) {
+      std::cout << f << " ";
+    }
+    std::cout << '\n';
+
     // calculate total memory required for twiddles;
     IdxGlobal mem_required_for_twiddles = 0;
     // First calculate mem required for twiddles between factors;
     for (std::size_t i = 0; i < factors_idx_global.size() - 1; i++) {
       mem_required_for_twiddles += 2 * factors_idx_global.at(i) * sub_batches.at(i);
     }
+    std::cout << "mem_required_for_twiddles: " << mem_required_for_twiddles << '\n';
+
     // Now calculate mem required for twiddles per implementation
     std::size_t counter = 0;
     for (const auto& kernel_data : kernels) {
+      assert(kernel_data.level != detail::level::WORKGROUP);
       if (kernel_data.level == detail::level::SUBGROUP) {
         mem_required_for_twiddles += 2 * factors_idx_global.at(counter);
-      } else if (kernel_data.level == detail::level::WORKGROUP) {
-        IdxGlobal factor_1 = detail::factorize(factors_idx_global.at(counter));
-        IdxGlobal factor_2 = factors_idx_global.at(counter) / factor_1;
-        mem_required_for_twiddles += 2 * (factor_1 * factor_2) + 2 * (factor_1 + factor_2);
       }
       counter++;
     }
+    std::cout << "mem_required_for_twiddles: " << mem_required_for_twiddles << '\n';
+
     std::vector<Scalar> host_memory(static_cast<std::size_t>(mem_required_for_twiddles));
     std::vector<Scalar> scratch_space(static_cast<std::size_t>(mem_required_for_twiddles));
     Scalar* device_twiddles =
@@ -160,58 +169,47 @@ struct committed_descriptor<Scalar, Domain>::calculate_twiddles_struct::inner<de
     for (std::size_t i = 0; i < factors_idx_global.size() - 1; i++) {
       calculate_twiddles(sub_batches.at(i), factors_idx_global.at(i), offset, host_memory.data());
     }
+
     // Now calculate per twiddles.
     counter = 0;
     for (const auto& kernel_data : kernels) {
+      assert(kernel_data.level != detail::level::WORKGROUP);
+
       if (kernel_data.level == detail::level::SUBGROUP) {
+        const IdxGlobal imag_offset = kernel_data.factors.at(0) * kernel_data.factors.at(1);
         for (Idx i = 0; i < kernel_data.factors.at(0); i++) {
           for (Idx j = 0; j < kernel_data.factors.at(1); j++) {
             double theta = -2 * M_PI * static_cast<double>(i * j) /
                            static_cast<double>(kernel_data.factors.at(0) * kernel_data.factors.at(1));
             auto twiddle =
                 std::complex<Scalar>(static_cast<Scalar>(std::cos(theta)), static_cast<Scalar>(std::sin(theta)));
-            host_memory[static_cast<std::size_t>(offset + static_cast<IdxGlobal>(j * kernel_data.factors.at(0) + i))] =
-                twiddle.real();
-            host_memory[static_cast<std::size_t>(
-                offset + static_cast<IdxGlobal>((j + kernel_data.factors.at(1)) * kernel_data.factors.at(0) + i))] =
-                twiddle.imag();
+            const IdxGlobal idx = j * kernel_data.factors.at(0) + i;
+            host_memory[static_cast<std::size_t>(offset + idx)] = twiddle.real();
+            host_memory[static_cast<std::size_t>(offset + idx + imag_offset)] = twiddle.imag();
           }
         }
         offset += 2 * kernel_data.factors.at(0) * kernel_data.factors.at(1);
-      } else if (kernel_data.level == detail::level::WORKGROUP) {
-        Idx factor_n = kernel_data.factors.at(0) * kernel_data.factors.at(1);
-        Idx factor_m = kernel_data.factors.at(2) * kernel_data.factors.at(3);
-        calculate_twiddles(static_cast<IdxGlobal>(kernel_data.factors.at(0)),
-                           static_cast<IdxGlobal>(kernel_data.factors.at(1)), offset, host_memory.data());
-        calculate_twiddles(static_cast<IdxGlobal>(kernel_data.factors.at(2)),
-                           static_cast<IdxGlobal>(kernel_data.factors.at(3)), offset, host_memory.data());
-        // Calculate wg twiddles and transpose them
-        calculate_twiddles(static_cast<IdxGlobal>(factor_n), static_cast<IdxGlobal>(factor_m), offset,
-                           host_memory.data());
-        for (Idx j = 0; j < factor_n; j++) {
-          detail::complex_transpose(host_memory.data() + offset + 2 * j * factor_n, scratch_space.data(), factor_m,
-                                    factor_n, factor_n * factor_m);
-        }
       }
       counter++;
     }
 
-    // Rearrage the twiddles between factors for optimal access patters in shared memory
     // Also take this opportunity to populate local memory size, and batch size, and launch params and local memory
-    // usage Note, global impl only uses store modifiers
+    // usage.
+    // NB: global impl only uses store modifiers
     // TODO: there is a heap corruption in workitem's access of loaded modifiers, hence loading from global directly for
     // now.
     counter = 0;
     for (auto& kernel_data : kernels) {
       kernel_data.batch_size = sub_batches.at(counter);
       kernel_data.length = static_cast<std::size_t>(factors_idx_global.at(counter));
-      if (kernel_data.level == detail::level::WORKITEM) {
-        // See comments in workitem_dispatcher for layout requirments.
         auto [global_range, local_range] =
-            detail::get_launch_params(factors_idx_global.at(counter), sub_batches.at(counter), detail::level::WORKITEM,
+            detail::get_launch_params(factors_idx_global.at(counter), sub_batches.at(counter), kernel_data.level,
                                       desc.n_compute_units, kernel_data.used_sg_size);
         kernel_data.global_range = global_range;
         kernel_data.local_range = local_range;
+
+      if (kernel_data.level == detail::level::WORKITEM) {
+        // See comments in workitem_dispatcher for layout requirments.
         if (counter < kernels.size() - 1) {
           kernel_data.local_mem_required = static_cast<std::size_t>(1);
         } else {
@@ -219,11 +217,6 @@ struct committed_descriptor<Scalar, Domain>::calculate_twiddles_struct::inner<de
         }
       } else if (kernel_data.level == detail::level::SUBGROUP) {
         // See comments in subgroup_dispatcher for layout requirements.
-        auto [global_range, local_range] =
-            detail::get_launch_params(factors_idx_global.at(counter), sub_batches.at(counter), detail::level::SUBGROUP,
-                                      desc.n_compute_units, kernel_data.used_sg_size);
-        kernel_data.global_range = global_range;
-        kernel_data.local_range = local_range;
         IdxGlobal factor_sg = detail::factorize_sg(factors_idx_global.at(counter), kernel_data.used_sg_size);
         IdxGlobal factor_wi = factors_idx_global.at(counter) / factor_sg;
         Idx tmp;
@@ -240,6 +233,7 @@ struct committed_descriptor<Scalar, Domain>::calculate_twiddles_struct::inner<de
       counter++;
     }
     desc.queue.copy(host_memory.data(), device_twiddles, static_cast<std::size_t>(mem_required_for_twiddles)).wait();
+    std::cout << "---- END calculate_twiddles_struct FOR GLOBAL ----\n";
     return device_twiddles;
   }
 };
@@ -281,12 +275,10 @@ template <direction Dir, detail::layout LayoutIn, detail::layout LayoutOut, Idx 
 template <typename Dummy>
 struct committed_descriptor<Scalar, Domain>::run_kernel_struct<Dir, LayoutIn, LayoutOut, SubgroupSize, TIn,
                                                                TOut>::inner<detail::level::GLOBAL, Dummy> {
-  static sycl::event execute(committed_descriptor& desc, const TIn& in, TOut& out, const TIn& in_imag, TOut& out_imag,
+  static sycl::event execute(committed_descriptor& desc, const TIn& in, TOut& out, const TIn& /*in_imag*/, TOut& /*out_imag*/,
                              const std::vector<sycl::event>& dependencies, IdxGlobal n_transforms,
                              IdxGlobal input_offset, IdxGlobal output_offset, Scalar scale_factor,
                              dimension_struct& dimension_data) {
-    (void)in_imag;
-    (void)out_imag;
     const auto& kernels = dimension_data.kernels;
     const Scalar* twiddles_ptr = static_cast<const Scalar*>(kernels.at(0).twiddles_forward.get());
     const IdxGlobal* factors_and_scan = static_cast<const IdxGlobal*>(dimension_data.factors_and_scan.get());

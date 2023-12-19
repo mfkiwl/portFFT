@@ -470,15 +470,17 @@ std::vector<sycl::event> compute_level(
   std::size_t local_memory_for_input = kd_struct.local_mem_required;
   std::size_t local_mem_for_store_modifier = [&]() -> std::size_t {
     if (factor_id < total_factors - 1) {
-      if (kd_struct.level == detail::level::WORKITEM || kd_struct.level == detail::level::WORKGROUP) {
+      if (kd_struct.level == detail::level::WORKITEM) {
         return 1;
       }
       if (kd_struct.level == detail::level::SUBGROUP) {
         return 2 * kd_struct.length * static_cast<std::size_t>(local_range / 2);
       }
     }
-    return std::size_t(1);
+    throw internal_error("illegal level encountered");
   }();
+
+  // TODO isn't this calculated earlier
   std::size_t loc_mem_for_twiddles = [&]() {
     if (kd_struct.level == detail::level::WORKITEM) {
       return std::size_t(1);
@@ -486,11 +488,9 @@ std::vector<sycl::event> compute_level(
     if (kd_struct.level == detail::level::SUBGROUP) {
       return 2 * kd_struct.length;
     }
-    if (kd_struct.level == detail::level::WORKGROUP) {
-      return std::size_t(1);
-    }
     throw internal_error("illegal level encountered");
   }();
+
   const IdxGlobal* inner_batches = factors_triple + total_factors;
   const IdxGlobal* inclusive_scan = factors_triple + 2 * total_factors;
   std::vector<sycl::event> events;

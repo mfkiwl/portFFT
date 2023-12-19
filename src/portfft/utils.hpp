@@ -111,6 +111,7 @@ std::vector<typename std::invoke_result_t<F, IdxGlobal, bool>::value_type> facto
 
     // repeatedly try to factorize until a size is accepted or factorization fails
     while (true) {
+	    // TODO why is batch_interleaved always true?
       if (auto subimpl = check_and_select_target_level(potential_factor, true); subimpl) {
         subtransforms.push_back(subimpl.value());
         break;
