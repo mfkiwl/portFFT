@@ -32,6 +32,7 @@
 
 #include "reference_data_wrangler.hpp"
 #include "sub_tuple.hpp"
+#include "sycl_utils.hpp"
 
 using namespace portfft;
 
@@ -390,6 +391,40 @@ std::enable_if_t<TestMemory == test_memory::buffer> check_fft(
   }
 }
 
+class Environment : public ::testing::Environment {
+ public:
+  static sycl::queue queue;
+
+  ~Environment() override {}
+
+  void SetUp() override {
+    namespace info = sycl::info::device;
+    sycl::device dev = queue.get_device();
+    sycl::platform platform = dev.get_info<info::platform>();
+
+    std::string device_type_str = get_device_type(dev);
+    std::string supports_double_str = dev.has(sycl::aspect::fp64) ? "yes" : "no";
+    std::string supports_usm_str = dev.has(sycl::aspect::usm_device_allocations) ? "yes" : "no";
+    std::string subgroup_sizes_str = get_device_subgroup_sizes(dev);
+    auto local_memory_size = dev.get_info<sycl::info::device::local_mem_size>();
+
+    std::cout << "Running tests on:\n";
+    std::cout << "  Device type: " << device_type_str << "\n";
+    std::cout << "  Platform: " << platform.get_info<sycl::info::platform::name>() << "\n";
+    std::cout << "  Name: " << dev.get_info<info::name>() << "\n";
+    std::cout << "  Vendor: " << dev.get_info<info::vendor>() << "\n";
+    std::cout << "  Version: " << dev.get_info<info::version>() << "\n";
+    std::cout << "  Driver version: " << dev.get_info<info::driver_version>() << "\n";
+    std::cout << "  Double supported: " << supports_double_str << "\n";
+    std::cout << "  USM supported: " << supports_usm_str << "\n";
+    std::cout << "  Subgroup sizes: " << subgroup_sizes_str << "\n";
+    std::cout << "  Local memory size: " << local_memory_size << "B\n";
+    std::cout << std::endl;
+  }
+};
+
+sycl::queue Environment::queue;
+
 /**
  * Common function to run tests.
  * Initializes tests and run them for USM or buffer.
@@ -402,18 +437,14 @@ std::enable_if_t<TestMemory == test_memory::buffer> check_fft(
  */
 template <test_memory TestMemory, typename FType, direction Dir, complex_storage Storage>
 void run_test(const test_params& params) {
-  std::vector<sycl::aspect> queue_aspects;
-  if constexpr (std::is_same_v<FType, double>) {
-    queue_aspects.push_back(sycl::aspect::fp64);
+  sycl::queue queue = Environment::queue;
+  sycl::device dev = queue.get_device();
+  if (std::is_same_v<FType, double> && !dev.has(sycl::aspect::fp64)) {
+    GTEST_SKIP() << "Device does not support double precision";
+    return;
   }
-  if constexpr (TestMemory == test_memory::usm) {
-    queue_aspects.push_back(sycl::aspect::usm_device_allocations);
-  }
-  sycl::queue queue;
-  try {
-    queue = sycl::queue(sycl::aspect_selector(queue_aspects));
-  } catch (sycl::exception& e) {
-    GTEST_SKIP() << e.what();
+  if (TestMemory == test_memory::usm && !dev.has(sycl::aspect::usm_device_allocations)) {
+    GTEST_SKIP() << "Device does not support USM";
     return;
   }
 

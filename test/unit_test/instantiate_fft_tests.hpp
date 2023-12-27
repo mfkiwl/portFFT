@@ -26,6 +26,7 @@
 #include <gtest/gtest.h>
 
 #include "fft_test_utils.hpp"
+#include "sycl_utils.hpp"
 
 // Mandatory parameters: placement, layout, direction, batch, lengths
 // Optional parameters: [forward_scale, backward_scale]
@@ -228,5 +229,13 @@ INSTANTIATE_TEST_SUITE_P(BwdScaledFFTTest, FFTTest,
 #define INSTANTIATE_TESTS(TYPE)     \
   INSTANTIATE_TESTS_FULL(TYPE, usm) \
   INSTANTIATE_TESTS_FULL(TYPE, buffer)
+
+int main(int argc, char** argv) {
+  testing::InitGoogleTest(&argc, argv);
+  // Register an Environment to initialize a SYCL queue once and print device information
+  // GTest takes ownership of the Environment pointer
+  testing::AddGlobalTestEnvironment(new Environment);
+  return RUN_ALL_TESTS();
+}
 
 #endif
